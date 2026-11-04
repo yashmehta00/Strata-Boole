@@ -7,7 +7,8 @@ import StrataBoole.Shallow.Layer
 
 /-! Three programs, written by hand in the form the translation from Core
 should produce, verified with `mvcgen` on the layer.  This file is the
-contract between the translation and the layer. -/
+contract between the translation and the layer. `ND.assert` is qualified below
+so Lean does not parse it as its intrinsic `assert` syntax. -/
 
 -- Lean marks `mvcgen` experimental; see docs/ShallowEmbedding.md.
 set_option mvcgen.warning false
@@ -41,7 +42,7 @@ theorem sum_to_spec (n : Int) (h : n ≥ 0) :
 
 /-- Find max, from the Verus translator's Boole output.  State: `(max, i)`. -/
 def find_max (nums : Array (BitVec 32)) : ND (BitVec 32) := do
-  assert (0 < nums.size)
+  ND.assert (0 < nums.size)
   let s ← whileInv
     (fun s : BitVec 32 × Int =>
       (∃ j : Int, 0 ≤ j ∧ j < s.2 ∧ s.1 = nums[j.toNat]!) ∧
@@ -49,9 +50,9 @@ def find_max (nums : Array (BitVec 32)) : ND (BitVec 32) := do
       0 ≤ s.2 ∧ s.2 ≤ nums.size)
     (fun s => s.2 < nums.size)
     (fun s => do
-      assert (0 ≤ s.2 ∧ s.2 < nums.size)
+      ND.assert (0 ≤ s.2 ∧ s.2 < nums.size)
       let max := if BitVec.slt s.1 nums[s.2.toNat]! then nums[s.2.toNat]! else s.1
-      assert (0 ≤ s.2 + 1 ∧ s.2 + 1 ≤ 18446744073709551615)
+      ND.assert (0 ≤ s.2 + 1 ∧ s.2 + 1 ≤ 18446744073709551615)
       pure (max, (s.2 + 1) % 18446744073709551616))
     (nums[0]!, 1)
   return s.1

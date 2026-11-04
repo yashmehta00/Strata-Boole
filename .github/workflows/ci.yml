@@ -43,3 +43,6 @@ jobs:
         with:
           use-github-cache: false
           test: true
+      # The WIP adequacy scaffold is intentionally outside the production imports.
+      - name: Build adequacy scaffold
+        run: lake build StrataBoole.Shallow.Interpreter.Adequacy
