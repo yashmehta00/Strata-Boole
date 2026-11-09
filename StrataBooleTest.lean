@@ -63,3 +63,4 @@ import StrataBooleTest.FeatureRequests.sha256_compact_indexed
 import StrataBooleTest.CoreTests.DefineFunRecTests
 import StrataBooleTest.shallow_find_max
 import StrataBooleTest.shallow_generic_datatypes
+import StrataBooleTest.tagless
