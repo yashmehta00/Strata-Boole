@@ -7,6 +7,7 @@ module
 
 public import StrataBoole.Boole
 public import StrataBoole.Verify
+public import StrataBoole.HoareLift
 
 /-! ## Strata Boole Public Interface
 
@@ -31,9 +32,9 @@ dialect of Strata.
 
 ### `import StrataBoole.Shallow.Layer`
 
-The shallow embedding's layer on `Std.Do`: the `ND` monad with `havoc`,
+A shallow-embedding prototype on `Std.Do`: the `ND` monad with `havoc`,
 `assume`, `assert` and `whileInv`, each with its `@[spec]` rule for `mvcgen`.
-See `docs/ShallowEmbedding.md`.
+The Hoare-logic route in `docs/HoareLogic.md` does not build on it.
 
 ### `import StrataBoole.MetaVerifier`
 

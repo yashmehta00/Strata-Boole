@@ -10,7 +10,7 @@ should produce, verified with `mvcgen` on the layer.  This file is the
 contract between the translation and the layer. `ND.assert` is qualified below
 so Lean does not parse it as its intrinsic `assert` syntax. -/
 
--- Lean marks `mvcgen` experimental; see docs/ShallowEmbedding.md.
+-- Lean marks `mvcgen` experimental; see docs/HoareLogic.md.
 set_option mvcgen.warning false
 
 namespace Strata.Shallow.Test
