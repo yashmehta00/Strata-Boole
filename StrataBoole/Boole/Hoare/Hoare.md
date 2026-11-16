@@ -1,22 +1,62 @@
-# Proving Boole contracts in Lean
+# Proving Boole contracts directly with Hoare
 
-A **predicate transformer** answers a question about a command. If I want a
-certain fact to hold **after** the command, what do I need to establish
-**before** it?
+### Weakest-precondition transformers
 
-Take `max2`. Its postcondition says that the returned value `r` is at least as
-large as both inputs.
+This folder builds Hoare logic directly from the Boole AST. The aim is to
+let Boole develop as its own language while reusing its state and
+expression definitions, without adding an execution semantics for commands.
+
+A **predicate transformer** answers the question we start with in a Hoare
+proof. If we want a fact to hold **after** a command, what must hold
+**before** it? The compiler builds the transformer recursively from the AST.  
+Applying it to a postcondition computes the weakest precondition (WP).  
+Plugging this into Lean's `vcgen`, with the registered Hoare rules, exposes the proof obligations.
+
+In line with Dijkstra's healthiness conditions, each transformer comes with a proof of monotonicity. If postcondition  
+`P` implies `Q` at every exit, then the weakest precondition for `P`
+implies the weakest precondition for `Q`.
+
+### Example
+
+The body of `max2` assigns the larger of its two inputs to `r`.
 
 ```text
 if x ≥ y then r := x else r := y
 ensures r ≥ x ∧ r ≥ y
 ```
 
-Start at the end and work backward. Before `r := x`, the postcondition becomes
-`x ≥ x ∧ x ≥ y`, because the assignment will give `r` the value of `x`.
-Likewise, before `r := y`, it becomes `y ≥ x ∧ y ≥ y`. The conditional tells
-us when we need each fact, so the precondition of the whole body is equivalent
-to these two goals:
+The compiler builds up the overall Transformer object as follows:
+
+```text
+xExpr       := Expression.read (.local "x")
+yExpr       := Expression.read (.local "y")
+guard       := binary .ge xExpr yExpr
+assignX     := Transformer.step (Transformer.assignState (.local "r") xExpr)
+assignY     := Transformer.step (Transformer.assignState (.local "r") yExpr)
+thenBranch  := Transformer.scope assignX
+elseBranch  := Transformer.scope assignY
+conditional := Transformer.branch (some guard) thenBranch elseBranch
+body        := Transformer.block "max2" (Transformer.scope conditional)
+```
+
+Let `Q` require `r ≥ x ∧ r ≥ y` on normal completion, and let `s` be a
+typed entry state. The scopes introduce no locals and the body has no
+labelled exits. The block and scope wrappers therefore leave the
+condition unchanged for this example. Unfolding the branch rule gives
+the nested transformer calls.
+
+```text
+body.transform Q s
+  ↔ conditional.transform Q s
+  ↔ test (some guard) s
+      (thenBranch.transform Q s)
+      (elseBranch.transform Q s)
+```
+
+Here `test` evaluates the guard in `s` and selects the corresponding
+precondition. On the then branch, the assignment requires
+`Q none (s[r ↦ x])`. On the else branch, it requires
+`Q none (s[r ↦ y])`. The two guarded obligations are therefore
 
 ```text
 x ≥ y  →  x ≥ x ∧ x ≥ y
@@ -77,8 +117,14 @@ havoc, conditionals, while loops, and labelled exits. Calls, for loops,
 choose, cover, quantifiers, compound types, and integer division and remainder
 are outside the current fragment.
 
-The Core compatibility theorem aims to show that a Boole certificate implies
-Strata's `contractTriple` for the checked Core lowering. The first proof
-fragment is narrower than the verifier's. The standalone Boole soundness
-statement is about Boole's own denotation. See the
-[proof plan](Compatibility/ProofPlan.md) for the details.
+[Compatibility.lean](Compatibility.lean) states the intended guarantee
+for the Core bridge fragment. A Boole certificate implies Strata's
+`contractTriple` for the checked Core lowering. The bridge fragment is
+narrower than the verifier's supported language.
+
+## Sources
+
+- Weakest preconditions, monotonicity, and the derivation of a maximum-of-two
+  program in §§3–4. [E. W. Dijkstra, *Guarded Commands, Nondeterminacy and Formal Derivation of Programs* (1975)](https://www.cs.utexas.edu/~EWD/transcriptions/EWD04xx/EWD472.html)
+- A small imperative verifier built with a `WP` instance and `@[spec]`
+  rules. [Ilya Sergey’s `vcgen` tutorial](https://github.com/ilyasergey/lean-vcgen-tutorial)
