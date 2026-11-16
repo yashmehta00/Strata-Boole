@@ -23,6 +23,8 @@ abbrev Assertion := State → Prop
 /-- `none` is normal continuation and `some label` is a labelled exit. -/
 abbrev Control := Option String
 
+/-- Turn a postcondition for each exit into a precondition. Monotonicity
+allows a proof to weaken the postcondition. -/
 structure Transformer where
   transform : (Control → Assertion) → Assertion
   monotone : ∀ {P Q}, (∀ c s, P c s → Q c s) → ∀ s, transform P s → transform Q s

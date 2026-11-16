@@ -8,9 +8,8 @@ public import StrataBoole.Boole.Hoare.Rules
 import all StrataBoole.Boole.Interp
 import all StrataBoole.Boole.Runtime
 
-/-! Direct construction of the Hoare transformer from the Boole AST. The
-front end shares Boole's scope and runtime operations. The only statement
-results are a transformer and its set of writes to enclosing slots. -/
+/-! Compile Boole statements to predicate transformers. Track writes alongside
+the transformer to determine which variables a loop can change. -/
 
 public section
 namespace Strata.Boole.Hoare
@@ -42,7 +41,10 @@ def binaryValue (op : BinaryOp) (left right : Value) : Except RuntimeError Value
     | none => .error .wrongType) op (fun _ => .ok left) (fun _ => .ok right) {}
 
 @[cbv_opaque, expose] def binary (op : BinaryOp) (left right : Expression) : Expression :=
-  fun s => (left s).bind fun a => (right s).bind fun b => binaryValue op a b
+  fun state =>
+    (left state).bind fun a =>
+    (right state).bind fun b =>
+    binaryValue op a b
 
 theorem binaryValue_int (op : BinaryOp) (a b : Int) :
     binaryValue op ⟨.int, a⟩ ⟨.int, b⟩ = match op with
@@ -140,7 +142,8 @@ private def expr (e : Boole.Expr) (context : ReadContext := {}) : InterpM TypedE
     let some binding := findBinding name scope.globals | reject range s!"Unknown global '{name}'"
     read range context (.global name) binding
   | .bvar range index =>
-    let some binding := (← get).locals.reverse[index]? | reject range s!"Unknown bound-variable index {index}"
+    let some binding := (← get).locals.reverse[index]?
+      | reject range s!"Unknown bound-variable index {index}"
     read range context (.local binding.name) binding
   | .not range a =>
     return ⟨.bool, Expression.unary .not (← (← expr a context).expect .bool range)⟩
@@ -154,9 +157,15 @@ private def expr (e : Boole.Expr) (context : ReadContext := {}) : InterpM TypedE
   | .equal range ty a b | .not_equal range ty a b =>
     let sort ← sourceSort ty
     let (op, result) := match e with
-      | .add_expr .. => (BinaryOp.add, sort) | .sub_expr .. => (.sub, sort) | .mul_expr .. => (.mul, sort)
-      | .le .. => (.le, .bool) | .lt .. => (.lt, .bool) | .ge .. => (.ge, .bool) | .gt .. => (.gt, .bool)
-      | .equal .. => (.eq, .bool) | _ => (.ne, .bool)
+      | .add_expr .. => (BinaryOp.add, sort)
+      | .sub_expr .. => (.sub, sort)
+      | .mul_expr .. => (.mul, sort)
+      | .le .. => (.le, .bool)
+      | .lt .. => (.lt, .bool)
+      | .ge .. => (.ge, .bool)
+      | .gt .. => (.gt, .bool)
+      | .equal .. => (.eq, .bool)
+      | _ => (.ne, .bool)
     unless op == .eq || op == .ne || numeric sort do
       reject range s!"Arithmetic is unsupported at {repr sort}"
     typedBinary range op result sort (← expr a context) (← expr b context)
@@ -227,7 +236,8 @@ private def writable (readOnly : List String) (range : SourceRange) (name : Stri
   resolveVariable range name true
 
 mutual
-  private def stmt (s : BooleDDM.Statement SourceRange) (readOnly : List String) : InterpM Compiled := do
+  private def stmt (s : BooleDDM.Statement SourceRange) (readOnly : List String) :
+      InterpM Compiled := do
     match s with
     | .initStatement range _ ty name e =>
       let rhs ← expr e
@@ -251,7 +261,8 @@ mutual
         .step (Transformer.assignState target.1 (fun _ => .ok ⟨target.2, value⟩))
       return ⟨command, [target]⟩
     | .assert range annotations label e =>
-      if annotations.val.isSome then reject range "Assertion metadata is unsupported by Hoare verification"
+      if annotations.val.isSome then
+        reject range "Assertion metadata is unsupported by Hoare verification"
       return ⟨.assertion (sourceLabel range label.val) (← boolean range e), []⟩
     | .assume range _ _ e =>
       return ⟨.assumption (← boolean range e), []⟩
@@ -270,7 +281,8 @@ mutual
       return ⟨.loop body.writes guard invariant measure body.command, body.writes⟩
     | .block_statement range _ name body =>
       let compiled ← withScope do
-        if (← get).labels.contains name.val then reject range s!"Block label '{name.val}' shadows an enclosing label"
+        if (← get).labels.contains name.val then
+          reject range s!"Block label '{name.val}' shadows an enclosing label"
         modify fun scope => { scope with labels := name.val :: scope.labels }
         block body readOnly
       return { compiled with command := .block name.val compiled.command }
@@ -324,10 +336,12 @@ private def contract (specification : Option (BooleDDM.Spec SourceRange)) (outpu
     match element with
     | .requires_spec range label free e =>
       let condition ← boolean range e { requiresOutputs := some (outputs.map Binding.name) }
-      result := { result with requires := result.requires ++ [⟨sourceLabel range label.val, free.val.isSome, condition⟩] }
+      result := { result with requires := result.requires ++
+        [⟨sourceLabel range label.val, free.val.isSome, condition⟩] }
     | .ensures_spec range label free e =>
       let condition ← boolean range e
-      result := { result with ensures := result.ensures ++ [⟨sourceLabel range label.val, free.val.isSome, condition⟩] }
+      result := { result with ensures := result.ensures ++
+        [⟨sourceLabel range label.val, free.val.isSome, condition⟩] }
     | .modifies_spec .. => pure ()
   return result
 
@@ -336,7 +350,8 @@ abbrev CompiledProgram := InterpProgram Expression Transformer
 
 private def procedure (range : SourceRange) (name : String)
     (types : Option (BooleDDM.TypeArgs SourceRange)) (inputs : BooleDDM.Bindings SourceRange)
-    (outputs : Option (BooleDDM.MonoDeclList SourceRange)) (specification : Option (BooleDDM.Spec SourceRange))
+    (outputs : Option (BooleDDM.MonoDeclList SourceRange))
+    (specification : Option (BooleDDM.Spec SourceRange))
     (body : Option (BooleDDM.Block SourceRange)) : InterpM Procedure :=
   withScope do
     if types.isSome then reject range "Polymorphic procedures are unsupported by Hoare verification"
@@ -352,24 +367,6 @@ private def procedure (range : SourceRange) (name : String)
     let compiled ← block body (ins.map Binding.name)
     return ⟨name, ins, outs, specs, .block name compiled.command⟩
 
-/-- The compiler built this procedure's transformer from the given body and
-read-only formal names. The named wrapper catches exits to the procedure. -/
-def CompiledProcedureBody (source : BooleDDM.Block SourceRange) (proc : Procedure) : Prop :=
-  ∃ before after compiled,
-    block source (proc.inputs.map Binding.name) before = .ok (compiled, after) ∧
-    proc.body = Transformer.block proc.name compiled.command
-
-/-- A procedure selected by the compiler comes from this source declaration. -/
-def ProcedureOrigin (command : BooleDDM.Command SourceRange) (proc : Procedure) : Prop :=
-  match command with
-  | .boole_procedure range name types inputs outputs _ specs body =>
-    ∃ before after, procedure range name.val types.val inputs outputs.val specs.val body.val before =
-      .ok (proc, after)
-  | .command_procedure range _ name types inputs specs body =>
-    ∃ before after, procedure range name.val types.val inputs none specs.val body.val before =
-      .ok (proc, after)
-  | _ => False
-
 private def declaration (compiled : List Procedure) :
     BooleDDM.Command SourceRange → InterpM (List Procedure)
   | .command_var range (.bind_mk _ name _ ty) => do
@@ -383,7 +380,8 @@ private def declaration (compiled : List Procedure) :
     if compiled.any (·.name == name.val) then reject range "Duplicate procedure name"
     return compiled ++ [← procedure range name.val types.val inputs outputs.val specs.val body.val]
   | .command_procedure range annotations name types inputs specs body => do
-    if annotations.val.isSome then reject range "Procedure metadata is unsupported by Hoare verification"
+    if annotations.val.isSome then
+      reject range "Procedure metadata is unsupported by Hoare verification"
     if compiled.any (·.name == name.val) then reject range "Duplicate procedure name"
     return compiled ++ [← procedure range name.val types.val inputs none specs.val body.val]
   | command => reject default s!"Unsupported Hoare declaration: {repr command}"

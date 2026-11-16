@@ -14,9 +14,8 @@ public meta import StrataDDM.Util.SourceRange
 public meta import StrataBoole.Boole
 public meta import StrataDDM.Integration.Lean.ToExpr
 
-/-! Quote the generated Boole AST at elaboration time. The generated DDM
-decoder is partial, so its computation belongs at the syntax boundary.
-The verification goal names the resulting Boole constructors. -/
+/-! `boole%` runs the DDM decoder at elaboration time and quotes the resulting
+Boole AST and name context as a Lean term. -/
 
 public section
 namespace Strata.Boole.Hoare

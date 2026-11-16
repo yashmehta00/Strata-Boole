@@ -119,7 +119,7 @@ theorem verifiedSource_iff {source : Source} {name : String} :
   verified_iff
 
 open Lean Elab Tactic in
-/-- Specialize the checked compiler equations before entering `vcgen`. -/
+/-- Reduce the compiler on the concrete source and report any compilation error. -/
 elab "boole_prepare" : tactic => do
   evalTactic (← `(tactic| cbv))
   withMainContext do
@@ -162,8 +162,7 @@ macro "boole_lift" location:location : tactic => `(tactic|
 
 macro "boole_lift" : tactic => `(tactic| boole_lift at *)
 
-/-- Specialize the Boole AST, invoke Lean's registered Hoare rules, and simplify
-the remaining propositions. Arithmetic and user lemmas are left to the caller. -/
+/-- Compile the source, apply the Hoare rules with `vcgen`, and simplify the verification goals. -/
 macro "boole_vcgen" : tactic => `(tactic| (
   boole_prepare
   simp only [Prepared.Valid, forValues]
