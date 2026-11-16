@@ -502,7 +502,7 @@ def param : DelabM (Option (String × TSyntax `core_type)) := do
   return some (x, ← withNaryArg 3 coreType)
 
 /-- A specification clause `(label, check)`, as a `requires` or `ensures` clause. -/
-def clause (ensures : Bool) : DelabM (Option (TSyntax `core_clause)) := do
+def clause (isPost : Bool) : DelabM (Option (TSyntax `core_clause)) := do
   let e := (← getExpr).consumeMData
   unless e.isAppOfArity ``Prod.mk 4 do return none
   let chk := (e.getArg! 3).consumeMData
@@ -510,7 +510,7 @@ def clause (ensures : Bool) : DelabM (Option (TSyntax `core_clause)) := do
   let l ← label? ((strLit? (e.getArg! 2)).getD "")
   let b ← withNaryArg 3 (withNaryArg 1 (coreExpr []))
   let free := (chk.getArg! 2).consumeMData.isConstOf ``Imperative.CheckAttr.Free
-  match ensures, free with
+  match isPost, free with
   | true, true => some <$> `(core_clause| free ensures $[$l]? $(b.stx):core_expr)
   | true, false => some <$> `(core_clause| ensures $[$l]? $(b.stx):core_expr)
   | false, true => some <$> `(core_clause| free requires $[$l]? $(b.stx):core_expr)

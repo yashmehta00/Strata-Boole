@@ -99,7 +99,7 @@ def lTyE : Lambda.LTy → Lean.Expr
 def constE : Lambda.LConst → Lean.Expr
   | .intConst i => mkApp (mkConst ``Lambda.LConst.intConst) (toExpr i)
   | .strConst s => mkApp (mkConst ``Lambda.LConst.strConst) (toExpr s)
-  | .realConst r => mkApp (mkConst ``Lambda.LConst.realConst) (toExpr r)
+  | .rationalConst r => mkApp (mkConst ``Lambda.LConst.rationalConst) (toExpr r)
   | .bitvecConst n b => mkApp2 (mkConst ``Lambda.LConst.bitvecConst) (toExpr n) (toExpr b)
   | .boolConst b => mkApp (mkConst ``Lambda.LConst.boolConst) (toExpr b)
 
