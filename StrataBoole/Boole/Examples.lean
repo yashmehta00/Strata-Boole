@@ -10,7 +10,6 @@ meta import StrataBoole.Boole
 meta import StrataBoole.Boole.Types
 meta import StrataBoole.Boole.Runtime
 meta import StrataBoole.Boole.Interp
-meta import StrataBoole.Boole.LegacyGlobals
 meta import StrataBoole.Boole.Elaboration.Native
 import all StrataBoole.Boole.Elaboration.Native
 import all StrataBoole.Boole.Types
@@ -286,24 +285,6 @@ private def concrete (source : StrataDDM.Program) : Bool :=
 #guard concrete max2
 #guard concrete add8
 #guard !concrete natAddition
-
--- Both interfaces omit a global whose type the legacy pre-pass cannot lower.
-private def unsupportedGlobal :=
-#strata
-program Boole;
-var g : real;
-procedure noop() returns () {};
-#end
-
-#guard concrete unsupportedGlobal
-#guard match getProgram unsupportedGlobal with
-  | .error _ => false
-  | .ok source =>
-      match nativeProgram source unsupportedGlobal.globalContext,
-          checkedCoreProgram source unsupportedGlobal.globalContext with
-      | .ok meaning, .ok checked => meaning.globals.isEmpty &&
-          ((checked.findProcByString? "noop").map (·.header.inputs.isEmpty)).getD false
-      | _, _ => false
 
 -- The semantic backend accepts compound carriers. Use a construction-only
 -- instance with its exact type policy so this check remains executable.

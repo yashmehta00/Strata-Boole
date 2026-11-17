@@ -57,7 +57,7 @@ end
 
 private def sourceInFragment (source : Boole.Program) (names : GlobalContext) : Prop :=
   let .prog _ declarations := source
-  -- The legacy lowering can drop globals whose type it cannot lower.
+  -- This fragment admits only integer globals.
   declarations.val.all (fun
     | .command_var _ (.bind_mk _ _ _ (.int _)) => true
     | .command_var .. => false

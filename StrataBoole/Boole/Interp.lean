@@ -6,7 +6,6 @@ module
 
 public import StrataBoole.Boole
 public import StrataBoole.Boole.Types
-import StrataBoole.Boole.LegacyGlobals
 import Strata.Util.Tactics
 
 /-! # Compositional interpretation of Boole syntax
@@ -427,8 +426,9 @@ def interpProc (I : Interpretation) (range : SourceRange) (name : String)
     let some body := body | reject range "A procedure body is required"
     return ⟨name, inputs, outputs, contract, I.block name (← interpBlock I body)⟩
 
-/-- Interpret Boole declarations without lowering to Core. The legacy policy
-selects retained globals before constructing their source meanings. -/
+/-- Interpret Boole declarations without lowering to Core. Globals are retained
+whenever their source type has a meaning; Core rejection of unlowerable types
+is the lowering's responsibility. -/
 def interpProgram (I : Interpretation) (program : Boole.Program) (names : GlobalContext) :
     Except InterpError (InterpProgram I.Expression I.Statement) :=
   let action : InterpM (InterpProgram I.Expression I.Statement) := do
@@ -438,11 +438,10 @@ def interpProgram (I : Interpretation) (program : Boole.Program) (names : Global
       match command with
       | .command_typedecl .. => pure ()
       | .command_var range (.bind_mk _ name _ ty) =>
-          if retainLegacyGlobal names ty then
-            if !procedures.isEmpty then reject range "Declare globals before procedures"
-            let binding := { name := name.val, sort := ← sourceSort ty : Binding }
-            fresh range binding
-            modify fun scope => { scope with globals := scope.globals ++ [binding] }
+          if !procedures.isEmpty then reject range "Declare globals before procedures"
+          let binding := { name := name.val, sort := ← sourceSort ty : Binding }
+          fresh range binding
+          modify fun scope => { scope with globals := scope.globals ++ [binding] }
       | .boole_procedure range name types inputs outputs decreases spec body =>
           if decreases.val.isSome then reject range "Procedure decreases clauses are outside this fragment"
           if procedures.any (fun p => p.name == name.val) then reject range "Duplicate procedure name"

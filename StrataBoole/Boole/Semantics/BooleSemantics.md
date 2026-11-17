@@ -76,7 +76,6 @@ The files separate the shared construction from its semantic instances:
 | [Runtime.lean](../Runtime.lean)     | Shared values, stores, expression operations, contracts, and procedure-entry setup.                                                |
 | [Semantics.lean](Semantics.lean) | Relational statement meanings, unbounded choice, finite loop closure, and `denoteProgram`.                                         |
 | [Native.lean](../Elaboration/Native.lean)       | A small executable interpretation with explicit choices and bounded loops.                                                         |
-| [LegacyGlobals.lean](../LegacyGlobals.lean) | The isolated rule for retaining exactly the globals the legacy pre-pass can lower. |
 | [CoreReference.lean](CoreReference.lean) | The comparison boundary: Core entry frames, observations, and contracts. |
 | [Adequacy/](Adequacy/) | The end-to-end theorem and its supporting proofs, grouped by lowering, entry frames, expressions, and statements. |
 | [Examples.lean](../Examples.lean)   | Readable Boole source examples and regression checks.                                                                              |
@@ -477,13 +476,11 @@ SMT/VC-generator soundness result. Those are different guarantees.
 ### Proof status and plan
 
 The main theorem has a checked proof body that composes supporting lemmas.
-Three supporting lemmas still have open proofs. The original lowering its global pre-pass omits a declaration whose type fails to
-lower. For example, `var g : real; procedure noop() returns () {};` yields a
-procedure with no `g` slot. `LegacyGlobals.lean` isolates this compatibility
-rule on the Boole side. `Adequacy/Lowering.lean` proves
-that the rule makes the same decision as the original global type lowering.
-The mathematical `real` carrier is unchanged; the policy only selects the
-globals that are retained in a program's interface.
+Three supporting lemmas still have open proofs. The Core lowering now fails
+when a global's type cannot be lowered (for example `var g : real`), instead of
+silently omitting that global from procedure interfaces. The denotation keeps
+such a global whenever its source type has a meaning; the mathematical `real`
+carrier is unchanged.
 
 Lean has checked the procedure lookup and program-level assembly.
 `find_lowered_procedure` finds each denoted procedure in the original
