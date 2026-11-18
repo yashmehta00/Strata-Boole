@@ -42,7 +42,7 @@ def forValues (bindings : List Binding) (post : List Value → Prop) : Prop :=
   match bindings with
   | [] => post []
   | binding :: rest =>
-    ∀ value : binding.sort.denote .builtins,
+    ∀ value : binding.sort.denote,
       forValues rest (fun values => post (⟨binding.sort, value⟩ :: values))
 
 def Prepared.entryState (p : Prepared) (globals arguments outputs : List Value) : State :=

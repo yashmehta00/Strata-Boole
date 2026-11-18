@@ -247,7 +247,7 @@ mutual
       let mut command := Transformer.skip
       for .bind_mk _ name _ ty in bindings declarations do
         let binding ← addLocal range name.val ty
-        let init := Transformer.arbitrary binding.sort fun value =>
+        let init := Transformer.arbitrary fun (value : binding.sort.denote) =>
           .step (Transformer.initState binding (fun _ => .ok ⟨binding.sort, value⟩))
         command := command.seq init
       return ⟨command, []⟩
@@ -257,7 +257,7 @@ mutual
       return ⟨.step (Transformer.assignState target.1 rhs), [target]⟩
     | .havoc_statement range _ name =>
       let target ← writable readOnly range name.val
-      let command := Transformer.arbitrary target.2 fun value =>
+      let command := Transformer.arbitrary fun (value : target.2.denote) =>
         .step (Transformer.assignState target.1 (fun _ => .ok ⟨target.2, value⟩))
       return ⟨command, [target]⟩
     | .assert range annotations label e =>

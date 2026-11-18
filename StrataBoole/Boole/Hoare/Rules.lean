@@ -62,7 +62,7 @@ def withChanges (writes : List (Variable × ValueType)) (state : State) (post : 
   match writes with
   | [] => post state
   | (slot, sort) :: rest =>
-    ∀ v : sort.denote .builtins, withChanges rest (state.update slot ⟨sort, v⟩) post
+    ∀ v : sort.denote, withChanges rest (state.update slot ⟨sort, v⟩) post
 
 private theorem withChanges_mono (writes : List (Variable × ValueType)) (state : State)
     (h : ∀ s, P s → Q s) : withChanges writes state P → withChanges writes state Q := by
@@ -120,7 +120,7 @@ def initState (binding : Binding) (expression : Expression) (s : State) :
   else .error .wrongType
 
 /-- An uninitialized local or a havoc ranges over its full source carrier. -/
-def arbitrary (sort : ValueType) (body : sort.denote .builtins → Transformer) : Transformer where
+def arbitrary (body : α → Transformer) : Transformer where
   transform Q s := ∀ value, (body value).transform Q s
   monotone h s hp value := (body value).monotone h s (hp value)
 
@@ -211,10 +211,10 @@ abbrev Triple (P : Assertion) (command : Transformer) (Q : Control → Assertion
       | .ok t => Q none t
       | .error _ => False) (Transformer.step run) Q := ⟨fun _ h => h⟩
 
-@[spec] theorem arbitrary_spec (sort : ValueType) (body : sort.denote .builtins → Transformer)
+@[spec] theorem arbitrary_spec (body : α → Transformer)
     (Q : Control → Assertion) :
     Triple (fun s => ∀ v, wp (body v) Q False s)
-      (Transformer.arbitrary sort body) Q := ⟨fun _ h => h⟩
+      (Transformer.arbitrary body) Q := ⟨fun _ h => h⟩
 
 @[spec] theorem assertion_spec (label : String) (e : Expression) (Q : Control → Assertion) :
     Triple (fun s => Obligation label (Holds e s) ∧ Q none s)
