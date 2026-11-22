@@ -4,8 +4,8 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.BlockShape
-import all StrataBoole.Boole.Semantics.Adequacy.Lowering
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.BlockShape
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
 
 public section
 

@@ -4,10 +4,10 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Typing
-public import StrataBoole.Boole.Semantics.Adequacy.Entry
-public import StrataBoole.Boole.Semantics.Adequacy.SourceInterface
-import all StrataBoole.Boole.Semantics.Adequacy.Lowering
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Typing
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Entry
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.SourceInterface
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
 import all Strata.Languages.Core.Typing.Spec.TypingSpec
 import all Strata.Languages.Core.Procedure
 

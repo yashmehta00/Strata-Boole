@@ -4,9 +4,10 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Semantics
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Types
+public import StrataBoole.Boole.Interpretation.Legacy.Semantics
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
+import all StrataBoole.Boole.Interpretation.Types
 public import StrataBoole.Verify
 public import Strata.Languages.Core.StatementSemantics
 public import Strata.Languages.Core.Logic.FactoryInterp

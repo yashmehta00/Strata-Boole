@@ -4,14 +4,14 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Iteration
-public import StrataBoole.Boole.Semantics.Adequacy.Execution
-import all StrataBoole.Boole.Semantics.Adequacy.Bodies
-import all StrataBoole.Boole.Semantics.Semantics
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Iteration
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Execution
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Bodies
+import all StrataBoole.Boole.Interpretation.Legacy.Semantics
 import Strata.DL.Imperative.StmtSemanticsProps
 import Strata.Util.RelationsProps
 
-import all StrataBoole.Boole.Semantics.Adequacy.Statements
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Statements
 
 public section
 

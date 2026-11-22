@@ -4,200 +4,220 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Types
+public import StrataBoole.Boole.Interpretation.Interp
+public import Mathlib.Data.Set.Operations
+import all StrataBoole.Boole.Interpretation.Interp
+import all StrataBoole.Boole.Interpretation.Expressions
 
-/-! # Relational denotational semantics of Boole
+/-! # Denotational semantics of Boole commands
 
-The semantic domains are explicit: expressions denote functions
-`State → Except RuntimeError Value`; statements denote relations
-`State → Outcome Unit → Prop`, packaged as `Computation Unit`. `Value` contains
-native Lean integers and Booleans. Globals remain globals, and entry snapshots
-are separate from the current store. No definition in this module calls the
-Core translator, evaluator or operational semantics.
-
-`denotation` supplies the compositional operations used by the structural
-functions in `Interp.lean`; `denoteProgram` applies that algebra to source
-syntax. Sequencing is relational composition on returned values and propagates
-other outcomes. Thus equal relations are interchangeable as arguments to these
-semantic operations; reasoning does not depend on their implementation text.
-
-There may be many outcomes (havoc), or none (a blocked assumption or divergence).
-The loop meaning is the least relation closed under finite iteration, without
-a fuel bound. This finite-outcome model does not distinguish a blocked path
-from an infinite path, or record whether an otherwise returning nondeterministic
-computation also has an infinite path. Total-correctness reasoning would need
-additional semantic information. Contracts are separate predicates; a body
-does not assume or assert its contract. Invariants and measures are annotations
-for verification and do not determine execution behavior.
-
-For the relational approach and compositional equations, see Cornell CS 4110,
-Lecture 7 (2020):
-https://www.cs.cornell.edu/courses/cs4110/2020fa/lectures/lecture07.pdf
-Lecture 8 explains least fixed points and reasoning by equality of denotations:
-https://www.cs.cornell.edu/courses/cs4110/2020fa/lectures/lecture08.pdf
+A command means a set of pairs of an initial state and a finite outcome.
+The equations follow the store-pair presentation of denotational semantics,
+extended with nondeterministic choice, assertion failure and named exits.
 -/
 
 public section
-namespace Strata.Boole
+namespace Strata.Boole.Denotational
+open Interpretation
 
-/-- A possibly nondeterministic denotation. `computation.run state outcome`
-means that the outcome belongs to the meaning at that state; `run` is relation
-membership, not an algorithm that enumerates outcomes. -/
-structure Computation (α : Type) where
-  run : State → Outcome α → Prop
+/-- All possible finite outcomes paired with their initial states.
+A deterministic command has at most one outcome for any initial state. -/
+abbrev Command := Set (State × Result)
 
-namespace Computation
-def pure (value : α) : Computation α := ⟨fun state outcome => outcome = .returned value state⟩
+namespace Command
 
-/-- Relational composition on returned values. Exits, assertion failures and
-runtime errors propagate without consulting the continuation. -/
-def bind (first : Computation α) (next : α → Computation β) : Computation β :=
-  ⟨fun state outcome =>
-    (∃ value middle, first.run state (.returned value middle) ∧ (next value).run middle outcome) ∨
-    (∃ label final, first.run state (.exited label final) ∧ outcome = .exited label final) ∨
-    (∃ label final, first.run state (.assertionFailed label final) ∧ outcome = .assertionFailed label final) ∨
-    (∃ reason final, first.run state (.stuck reason final) ∧ outcome = .stuck reason final)⟩
+/-- Skip completes normally with the initial state. -/
+def skip : Command :=
+  { (initial, final) | final = (.normal, initial) }
 
-instance instMonad : Monad (Computation) where
-  pure := Computation.pure
-  bind := Computation.bind
+/-- Sequencing composes normal outcomes through an intermediate state and
+propagates an early exit or failure of the first command. -/
+def seq (first second : Command) : Command :=
+  { (initial, final) |
+      (∃ middle,
+        (initial, (.normal, middle)) ∈ first ∧
+        (middle, final) ∈ second) ∨
+      (final.1 ≠ .normal ∧ (initial, final) ∈ first) }
 
-abbrev emit (outcome : State → Outcome α) : Computation α :=
-  ⟨fun state result => result = outcome state⟩
+/-- Assignment evaluates the expression in the initial state and updates its
+existing, correctly typed slot. Invalid slots or expressions produce an error. -/
+def assign (reference : Variable) (expression : Interpretation.Expr t) : Command :=
+  { (initial, final) |
+      match Interpretation.Expr.read t reference initial with
+      | .error reason => final = (.runtimeError reason, initial)
+      | .ok _ =>
+          match expression initial with
+          | .ok value => final = (.normal, initial.update reference ⟨t, value⟩)
+          | .error reason => final = (.runtimeError reason, initial) }
 
-abbrev get : Computation State := emit fun state => .returned state state
-abbrev put (state : State) : Computation Unit := emit fun _ => .returned () state
-abbrev stuck (reason : RuntimeError) : Computation α := emit (.stuck reason)
+/-- A declaration adds a fresh local slot. An omitted initializer admits
+every value of the declared type. An initializer is evaluated in the initial state, before the new slot is added. -/
+def declare (binding : Binding) (initializer : Option (Interpretation.Expr binding.sort)) : Command :=
+  { (initial, final) |
+      if (initial.locals.lookup binding.name).isSome then
+        final = (.runtimeError (.duplicateLocal binding.name), initial)
+      else
+        match initializer with
+        | none =>
+            ∃ value : binding.sort.denote,
+              final = (.normal, { initial with
+                locals := initial.locals ++ [(binding.name, ⟨binding.sort, value⟩)] })
+        | some expression =>
+            match expression initial with
+            | .ok value => final = (.normal, { initial with
+                locals := initial.locals ++ [(binding.name, ⟨binding.sort, value⟩)] })
+            | .error reason => final = (.runtimeError reason, initial) }
 
-/-- Choose any value of the requested source type. -/
-def choose (sort : ValueType) : Computation Value := ⟨fun state outcome =>
-  ∃ value, value.sort = sort ∧ outcome = .returned value state⟩
-end Computation
+/-- Havoc admits an assignment for each mathematical value of the slot's type. -/
+def havoc (reference : Variable) (t : ValueType) : Command :=
+  { (initial, final) |
+      ∃ value : t.denote,
+        (initial, final) ∈ assign reference (Interpretation.Expr.constant t value) }
 
-namespace Computation
-abbrev evaluate (expression : Expression) : Computation Value :=
-  StatementSemantics.evaluate emit expression
+/-- A true assertion preserves the state. A false assertion produces a labelled
+failure, and an invalid expression produces a runtime error. -/
+def assertion (label : String) (expression : Interpretation.Expr .bool) : Command :=
+  { (initial, final) |
+      match expression initial with
+      | .ok true => final = (.normal, initial)
+      | .ok false => final = (.assertionFailure label, initial)
+      | .error reason => final = (.runtimeError reason, initial) }
 
-abbrev test : Option Expression → Computation Bool
-  | none => ⟨fun state outcome => outcome = .returned true state ∨ outcome = .returned false state⟩
-  | some expression => StatementSemantics.test emit expression
+/-- An assumption preserves the state when true and admits no outcome when
+false. An invalid expression produces a runtime error. -/
+def assumption (expression : Interpretation.Expr .bool) : Command :=
+  { (initial, final) |
+      match expression initial with
+      | .ok true => final = (.normal, initial)
+      | .ok false => False
+      | .error reason => final = (.runtimeError reason, initial) }
 
-def declare (binding : Binding) (initializer : Option Expression) : Computation Unit :=
-  StatementSemantics.declare emit choose binding initializer
+/-- A Boolean guard selects an arm. An absent guard admits the union of both
+arms. An invalid guard produces a runtime error. -/
+def branch (guard : Guard) (yes no : Command) : Command :=
+  { (initial, final) |
+      match guard with
+      | none => (initial, final) ∈ yes ∨ (initial, final) ∈ no
+      | some test =>
+          match test initial with
+          | .ok true => (initial, final) ∈ yes
+          | .ok false => (initial, final) ∈ no
+          | .error reason => final = (.runtimeError reason, initial) }
 
-def assign (reference : Variable) (expression : Expression) : Computation Unit :=
-  StatementSemantics.assign emit reference expression
+/-- The first approximation is empty. Each next approximation tests the guard,
+then stops or composes the body with the preceding approximation. -/
+def unroll (guard : Guard) (body : Command) : Nat → Command
+  | 0 => ∅
+  | n + 1 => branch guard (seq body (unroll guard body n)) skip
 
-def havoc (reference : Variable) (sort : ValueType) : Computation Unit :=
-  StatementSemantics.havoc emit choose reference sort
+/-- A loop is the union of all its finite approximations. The quantifier ranges
+over every natural number, so the meaning has no fixed iteration bound. -/
+def loop (guard : Guard) (body : Command) : Command :=
+  { (initial, final) | ∃ n, (initial, final) ∈ unroll guard body n }
 
-def assertion (label : String) (expression : Expression) : Computation Unit :=
-  StatementSemantics.assertion emit label expression
+/-- A scope retains the final values of the locals that existed at entry,
+removing the slots introduced inside the body on every finite completion. -/
+def scope (body : Command) : Command :=
+  { (initial, final) |
+      ∃ inner, (initial, inner) ∈ body ∧ final = Result.leaveScope initial inner }
 
-def assumption (expression : Expression) : Computation Unit :=
-  StatementSemantics.assumption emit ⟨fun _ _ => False⟩ expression
+/-- A labelled block consumes an exit to its own label and propagates every
+other completion with its final state. -/
+def block (label : String) (body : Command) : Command :=
+  { (initial, final) |
+      ∃ inner, (initial, inner) ∈ body ∧ final = Result.catchExit label inner }
 
-def branch (guard : Option Expression) (yes no : Computation Unit) : Computation Unit :=
-  StatementSemantics.branch (test guard) yes no
+/-- An exit produces the named completion without changing the state. -/
+def exit (label : String) : Command :=
+  { (initial, final) | final = (.exit label, initial) }
 
-/-- Drop block-local slots on every outcome, preserving updates to outer slots. -/
-def scope (body : Computation Unit) : Computation Unit := ⟨fun initial outcome =>
-  ∃ inner, body.run initial inner ∧ outcome = inner.mapState
-    (fun final => { final with locals := final.locals.restrict initial.locals })⟩
+/-- On a correctly typed target slot, a normal assignment outcome is exactly
+the initial state updated with a successful value of the expression. -/
+theorem mem_assign_normal_iff (reference : Variable) (expression : Interpretation.Expr t)
+    (initial final : State) (previous : t.denote)
+    (slot : Interpretation.Expr.read t reference initial = .ok previous) :
+    (initial, (.normal, final)) ∈ assign reference expression ↔
+      ∃ value, expression initial = .ok value ∧
+        final = initial.update reference ⟨t, value⟩ := by
+  cases evaluated : expression initial <;> simp [assign, Set.mem_ofPred_eq, slot, evaluated]
 
-def block (name : String) (body : Computation Unit) : Computation Unit := ⟨fun state outcome =>
-  ∃ inner, body.run state inner ∧ outcome = match inner with
-    | .exited label final => if label == name then .returned () final else .exited label final
-    | other => other⟩
+/-- Normal sequencing outcomes are exactly relational composition through a
+normal intermediate state. -/
+theorem mem_seq_normal_iff (first second : Command) (initial final : State) :
+    (initial, (.normal, final)) ∈ seq first second ↔
+      ∃ middle, (initial, (.normal, middle)) ∈ first ∧
+        (middle, (.normal, final)) ∈ second := by
+  simp [seq, Set.mem_ofPred_eq]
 
-def exit (label : String) : Computation Unit := ⟨fun state outcome => outcome = .exited label state⟩
+/-- The assignment equation describes exactly the shared state update used by
+the executable interpretation, including invalid-state errors. -/
+theorem mem_assign_iff (reference : Variable) (expression : Interpretation.Expr t)
+    (initial : State) (final : Result) :
+    (initial, final) ∈ assign reference expression ↔
+      final = Effect.assign reference expression initial := by
+  simp only [assign, Set.mem_ofPred_eq]
+  cases slot : Interpretation.Expr.read t reference initial <;>
+    cases evaluated : expression initial <;>
+    simp [Effect.assign, slot, evaluated]
 
-private def loopStep (guard : Computation Bool) (body rest : Computation Unit) :
-    Computation Unit :=
-  StatementSemantics.branch guard (bind body fun _ => rest) (pure ())
+/-- Initializing a local has exactly the result of the shared declaration
+effect, including duplicate-slot and expression errors. -/
+theorem mem_declare_some_iff (binding : Binding) (expression : Interpretation.Expr binding.sort)
+    (initial : State) (final : Result) :
+    (initial, final) ∈ declare binding (some expression) ↔
+      final = Effect.declare binding expression initial := by
+  simp only [declare, Set.mem_ofPred_eq]
+  by_cases duplicate : (initial.locals.lookup binding.name).isSome = true
+  · simp [Effect.declare, duplicate]
+  · cases evaluated : expression initial <;>
+      simp [Effect.declare, duplicate, evaluated]
 
-private def loopUnfold (guard : Computation Bool) (body : Computation Unit) : Nat → Computation Unit
-  | 0 => ⟨fun _ _ => False⟩
-  | n + 1 => loopStep guard body (loopUnfold guard body n)
+/-- The assertion equation has exactly the result of the shared assertion
+effect, including its label and final state on failure. -/
+theorem mem_assertion_iff (label : String) (expression : Interpretation.Expr .bool)
+    (initial : State) (final : Result) :
+    (initial, final) ∈ assertion label expression ↔
+      final = Effect.assertion label expression initial := by
+  simp only [assertion, Set.mem_ofPred_eq]
+  cases evaluated : expression initial with
+  | error reason => simp [Effect.assertion, evaluated]
+  | ok value => cases value <;> simp [Effect.assertion, evaluated]
 
-/-- A loop permits every outcome reached in some finite unfolding. Taking all
-unfoldings gives the least solution of the loop equation. -/
-def loop (guard : Computation Bool) (body : Computation Unit) : Computation Unit :=
-  ⟨fun state outcome => ∃ n, (loopUnfold guard body n).run state outcome⟩
-end Computation
+end Command
 
-/-- Boole's semantic algebra over native values and state-to-outcome relations.
-Combined with `interpProgram`, this defines the compositional source meaning.
-No operation constructs Core expressions or turns globals into parameters. -/
-@[expose] noncomputable def denotation : Interpretation where
-  Expression := Expression
-  Statement := Computation Unit
-  literal := fun value _ => .ok value
-  apply := Expression.apply
-  mapGet := Expression.mapGet
-  mapSet := Expression.mapSet
-  mapConst := Expression.mapConst
-  sequenceEmpty := Expression.sequenceEmpty
-  sequenceLength := Expression.sequenceLength
-  sequenceAppend := Expression.sequenceAppend
-  sequenceBuild := Expression.sequenceBuild
-  read := Expression.read
-  unary := Expression.unary
-  binary := Expression.binary
-  conditional := Expression.conditional
-  old := Expression.old
-  skip := pure ()
-  seq := fun first second => first >>= fun _ => second
-  declare := Computation.declare
-  assign := Computation.assign
-  havoc := Computation.havoc
-  assertion := Computation.assertion
-  assumption := Computation.assumption
-  branch := Computation.branch
-  loop := fun guard => Computation.loop (Computation.test guard)
-  scope := Computation.scope
-  block := Computation.block
-  exit := Computation.exit
+/-- Instantiate the source fold with the mathematical command equations. -/
+def commands : CommandAlgebra Command where
+  skip := Command.skip
+  seq := Command.seq
+  declare := Command.declare
+  assign := Command.assign
+  havoc := Command.havoc
+  assertion := Command.assertion
+  assumption := Command.assumption
+  branch := Command.branch
+  loop := Command.loop
+  scope := Command.scope
+  block := Command.block
+  exit := Command.exit
 
-abbrev ProcedureMeaning := InterpProcedure Expression (Computation Unit)
-abbrev ProgramMeaning := InterpProgram Expression (Computation Unit)
+open Classical in
+noncomputable def equality : Equality := fun t =>
+  some ((scalarEquality t).getD (fun a b => decide (a = b)))
 
-/-- Assign a Boole program its compositional denotation. The result contains
-procedure-body relations and separate contract predicates. A construction error
-means the source has no denotation in the supported fragment; it is distinct
-from a runtime error or a denotation with no outcomes. -/
-noncomputable def denoteProgram (program : Boole.Program) (names : StrataDDM.GlobalContext)
-    :
-    Except InterpError (ProgramMeaning) := interpProgram denotation program names
+abbrev Program := Interpretation.Program Command
 
+/-- Construct the mathematical meaning directly from the Boole source syntax. -/
+noncomputable def denoteProgram (source : Boole.Program) (names : StrataDDM.GlobalContext) :
+    Except InterpError Program :=
+  Interpretation.interpProgram commands equality (fun _ => true) source names
 
-/-- Run a procedure body, choosing arbitrary initial values for its output-only
-slots. Contract predicates are retained separately and are not runtime checks. -/
-def InterpProgram.runs (program : ProgramMeaning) (input : Invocation) (outcome : Outcome Unit) : Prop :=
+/-- An invocation admits a result when a matching procedure admits it from an
+entry state containing the supplied typed inputs and some typed initial outputs. -/
+def runs (program : Program) (input : Invocation) (result : Result) : Prop :=
   ∃ procedure, program.findProcedure input.procedure = some procedure ∧
     valuesMatch program.globals input.globals = true ∧
     valuesMatch procedure.inputs input.arguments = true ∧
     ∃ outputs, valuesMatch procedure.outputs outputs = true ∧
-      procedure.body.run (initialState program.globals procedure input outputs) outcome
+      (initialState program.globals procedure input outputs, result) ∈ procedure.body
 
-/-- The procedure observations compared by adequacy. Returned globals are in
-declaration order; outputs are in parameter order. Failure labels/stores, local
-temporaries, runtime errors, divergence and full traces are not observations here. -/
-inductive Observation where
-  | returned (globals outputs : List Value)
-  | assertionFailure
-  deriving Repr
-
-/-- Successful body results and reachable assertion failure. A failure before
-later divergence remains observable because sequencing propagates failure. -/
-def InterpProgram.observes (program : ProgramMeaning) (input : Invocation) : Observation → Prop
-  | .returned globals outputs =>
-      ∃ procedure final, program.findProcedure input.procedure = some procedure ∧
-        program.runs input (.returned () final) ∧
-        readValues program.globals final.globals = some globals ∧
-        readValues procedure.outputs final.locals = some outputs
-  | .assertionFailure => ∃ label final, program.runs input (.assertionFailed label final)
-
-end Strata.Boole
+end Strata.Boole.Denotational

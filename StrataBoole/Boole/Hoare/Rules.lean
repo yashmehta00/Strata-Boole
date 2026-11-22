@@ -4,8 +4,9 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Runtime
+public import StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
 public import Std.Internal.Do
 public meta import Std.Tactic.Do
 

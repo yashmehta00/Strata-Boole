@@ -4,17 +4,19 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Observations
-import all StrataBoole.Boole.Semantics.Adequacy.Observations
-import all StrataBoole.Boole.Semantics.Adequacy.Contracts
-public import StrataBoole.Boole.Semantics.Adequacy.ProcedureExecution
-import StrataBoole.Boole.Semantics.Adequacy.DeclarativeEntry
-import all StrataBoole.Boole.Semantics.Adequacy.Bodies
-import all StrataBoole.Boole.Semantics.Adequacy.Statements
-import all StrataBoole.Boole.Semantics.Semantics
-import all StrataBoole.Boole.Semantics.CoreReference
-import all StrataBoole.Boole.Interp
-import all StrataBoole.Boole.Runtime
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Observations
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Observations
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Contracts
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.ProcedureExecution
+import StrataBoole.Boole.Interpretation.Denotational.Adequacy.DeclarativeEntry
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Bodies
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Statements
+import all StrataBoole.Boole.Interpretation.Legacy.Semantics
+import all StrataBoole.Boole.Interpretation.Denotational.CoreReference
+import all StrataBoole.Boole.Interpretation.Legacy.Interp
+import all StrataBoole.Boole.Interpretation.Source
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
 import Strata.DL.Imperative.StmtSemanticsProps
 import Strata.Languages.Core.StatementSemanticsProps
 

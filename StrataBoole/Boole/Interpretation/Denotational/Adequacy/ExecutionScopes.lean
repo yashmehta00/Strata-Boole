@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Typing
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Typing
 import all Strata.Languages.Core.Statement
 import all Strata.Languages.Core.Typing.Spec.TypingSpec
 

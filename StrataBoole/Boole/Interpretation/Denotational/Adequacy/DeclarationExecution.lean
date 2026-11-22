@@ -4,11 +4,11 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Execution
-public import StrataBoole.Boole.Semantics.Adequacy.ReplayCommands
-import all StrataBoole.Boole.Semantics.Adequacy.Bodies
-import all StrataBoole.Boole.Semantics.Adequacy.Statements
-import all StrataBoole.Boole.Semantics.Semantics
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Execution
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.ReplayCommands
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Bodies
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Statements
+import all StrataBoole.Boole.Interpretation.Legacy.Semantics
 
 public section
 

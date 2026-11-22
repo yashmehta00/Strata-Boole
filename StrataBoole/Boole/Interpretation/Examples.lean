@@ -7,22 +7,23 @@ module
 import StrataDDM.Integration.Lean.HashCommands
 meta import StrataBoole.Grammar
 meta import StrataBoole.Boole
-meta import StrataBoole.Boole.Types
-meta import StrataBoole.Boole.Runtime
-meta import StrataBoole.Boole.Interp
-meta import StrataBoole.Boole.Elaboration.Native
-import all StrataBoole.Boole.Elaboration.Native
-import all StrataBoole.Boole.Types
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Interp
-meta import StrataBoole.Boole.Semantics.Semantics
+meta import StrataBoole.Boole.Interpretation.Types
+meta import StrataBoole.Boole.Interpretation.Runtime
+meta import StrataBoole.Boole.Interpretation.Interp
+meta import StrataBoole.Boole.Interpretation.Computational.Native
+import all StrataBoole.Boole.Interpretation.Computational.Native
+import all StrataBoole.Boole.Interpretation.Types
+import all StrataBoole.Boole.Interpretation.Runtime
+import all StrataBoole.Boole.Interpretation.Source
+meta import StrataBoole.Boole.Interpretation.Denotational.Semantics
 meta import StrataBoole.Verify
 import all StrataBoole.Verify
 import all StrataBoole.Boole
-import StrataBoole.Boole.Semantics.CoreReference
-meta import StrataBoole.Boole.Semantics.CoreReference
-import all StrataBoole.Boole.Semantics.Semantics
-import StrataBoole.Boole.Semantics.Adequacy.Iteration
+import StrataBoole.Boole.Interpretation.Denotational.CoreReference
+meta import StrataBoole.Boole.Interpretation.Denotational.CoreReference
+import all StrataBoole.Boole.Interpretation.Denotational.Semantics
+import all StrataBoole.Boole.Interpretation.Expressions
+import all StrataBoole.Boole.Interpretation.Interp
 
 /-! # Small Boole programs and semantic regression checks
 
@@ -145,7 +146,7 @@ private def postconditions (source : StrataDDM.Program) (name : String) (state :
   | .ok meaning => match meaning.findProcedure name with
     | none => false
     | some procedure => procedure.contract.ensures.all fun clause =>
-        match clause.condition state with | .ok (.bool true) => true | _ => false
+        match clause.condition state with | .ok true => true | _ => false
 
 #guard builds max2
 #guard checks max2
@@ -172,28 +173,34 @@ private def postconditions (source : StrataDDM.Program) (name : String) (state :
 #guard !postconditions incrementGlobal "inc"
   { globals := [("g", .int 13)], locals := [("x", .int 3)], snapshots := [("g", .int 9)] }
 
--- Havoc admits every integer, including negative values; no bounded choice set.
-example : (Computation.choose .int).run {} (.returned (.int (-37)) {}) :=
-  ⟨.int (-37), rfl, rfl⟩
+open Interpretation
 
--- A failed assumption has no outcomes, rather than an assertion-failure outcome.
-example (outcome : Outcome Unit) :
-    ¬ (Computation.assumption (fun _ => .ok (.bool false))).run {} outcome := by
-  simp [Computation.assumption, StatementSemantics.assumption, StatementSemantics.test,
-    Computation.emit, Bind.bind, Pure.pure, Computation.pure, Computation.bind, Value.bool]
-
--- A failure is propagated even when the continuation is an infinite loop.
+-- Mathematical havoc ranges over the entire carrier.
 example :
-    (Computation.assertion "failure" (fun _ => .ok (.bool false)) >>=
-      fun _ => Computation.loop (Computation.pure true) (Computation.pure ())).run
-      {} (.assertionFailed "failure" {}) := by
-  exact .inr (.inr (.inl ⟨"failure", {},
-    .inl ⟨false, {}, .inl ⟨.bool false, {}, rfl, rfl⟩, rfl⟩, rfl⟩))
+    ({ locals := [("x", .int 0)] }, (.normal, { locals := [("x", .int (-37))] })) ∈
+      Denotational.Command.havoc (.local "x") .int :=
+  ⟨-37, rfl⟩
 
--- False guards terminate without executing even a failing body.
-example : (Computation.loop (Computation.pure false)
-    (Computation.assertion "unreachable" (fun _ => .ok (.bool false)))).run {}
-    (.returned () {}) := Computation.loop_iff_iteration.mpr (.stop rfl)
+-- False assumptions block; false assertions are finite outcomes.
+example (outcome : Interpretation.Result) :
+    ({}, outcome) ∉
+      Denotational.Command.assumption (Interpretation.Expr.constant .bool false) := by
+  intro h
+  exact h
+
+example :
+    ({}, (.assertionFailure "failure", {})) ∈
+      Denotational.Command.seq
+        (Denotational.Command.assertion "failure" (Interpretation.Expr.constant .bool false))
+        (Denotational.Command.loop (some (Interpretation.Expr.constant .bool true))
+          Denotational.Command.skip) :=
+  Or.inr ⟨(by intro h; cases h), rfl⟩
+
+example :
+    ({}, (.normal, {})) ∈
+      Denotational.Command.loop (some (Interpretation.Expr.constant .bool false))
+        (Denotational.Command.assertion "unreachable" (Interpretation.Expr.constant .bool false)) :=
+  ⟨1, rfl⟩
 
 -- The type interpretation is systematic and directly reduces to native carriers.
 example : ValueType.denote (.map .int (.sequence .nat)) = (Int → List Nat) := by rfl
@@ -207,7 +214,7 @@ private def nativeMax2 : Option Int := do
   let config : Native.Config := { choose := fun ty => match ty with
     | .int => some (.int 0) | .bool => some (.bool false) | _ => none }
   match Native.run program { procedure := "max2", arguments := [.int 3, .int 8], globals := [] } config with
-  | .outcome (.returned () state) => match state.locals.lookup "r" with
+  | .outcome (.normal, state) => match state.locals.lookup "r" with
     | some (.int value) => some value | _ => none
   | _ => none
 
@@ -219,7 +226,7 @@ private def nativeCount : Option Int := do
   let program ← (nativeProgram ast counting.globalContext).toOption
   let config : Native.Config := { choose := fun _ => some (.int 0) }
   match Native.run program { procedure := "count", arguments := [.int 3], globals := [] } config with
-  | .outcome (.returned () state) =>
+  | .outcome (.normal, state) =>
     match state.locals.lookup "r" with | some (.int n) => some n | _ => none
   | _ => none
 
@@ -232,20 +239,15 @@ private def nativeFailure : Bool :=
   | .ok ast => match nativeProgram ast failureBeforeDivergence.globalContext with
     | .error _ => false
     | .ok program => match Native.run program { procedure := "fail", globals := [], arguments := [] } {} with
-      | .outcome (.assertionFailed _ _) => true
+      | .outcome (.assertionFailure _, _) => true
       | _ => false
 
 #guard nativeFailure
 
--- Direct mathematical expressions use native carriers, including compound ones.
-example : Expression.binary .add (fun _ => .ok (.int 2))
-    (fun _ => .ok (.int 2)) {} = .ok (.int 4) := by rfl
-example : Expression.sequenceAppend
-    (fun _ => .ok ⟨.sequence .int, ([1, 2] : List Int)⟩)
-    (fun _ => .ok ⟨.sequence .int, ([3] : List Int)⟩) {} = .ok ⟨.sequence .int, ([1, 2, 3] : List Int)⟩ := by rfl
-example : Expression.mapGet
-    (fun _ => .ok ⟨.map .int .int, fun (x : Int) => x + 1⟩)
-    (fun _ => .ok (.int 4)) {} = .ok (.int 5) := by rfl
+-- The operator receives and returns native values at its fixed carrier.
+example : Interpretation.Expr.zip (a := .int) (b := .int) (c := .int) Int.add
+    (Interpretation.Expr.constant .int 2) (Interpretation.Expr.constant .int 2)
+    {} = .ok 4 := rfl
 
 def add8 :=
 #strata
@@ -263,7 +265,7 @@ private def nativeAdd8 : Option Nat := do
     | .bitvec width => some (.bitvec width 0) | _ => none }
   match Native.run program
       { procedure := "add8", globals := [], arguments := [.bitvec 8 250, .bitvec 8 10] } config with
-  | .outcome (.returned () state) => match state.locals.lookup "r" with
+  | .outcome (.normal, state) => match state.locals.lookup "r" with
     | some (.bitvec _ value) => some value.toNat | _ => none
   | _ => none
 
@@ -294,7 +296,8 @@ private def concrete (source : StrataDDM.Program) : Bool :=
 private def hasMeaning (source : StrataDDM.Program) : Bool :=
   match getProgram source with
   | .error _ => false
-  | .ok ast => checkFragment (fun _ => true) ast source.globalContext
+  | .ok ast => (Interpretation.interpProgram Denotational.commands Interpretation.scalarEquality
+      (fun _ => true) ast source.globalContext).isOk
 
 def compoundValues :=
 #strata

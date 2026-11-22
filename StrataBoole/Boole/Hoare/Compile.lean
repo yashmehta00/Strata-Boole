@@ -5,8 +5,10 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 module
 
 public import StrataBoole.Boole.Hoare.Rules
-import all StrataBoole.Boole.Interp
-import all StrataBoole.Boole.Runtime
+import all StrataBoole.Boole.Interpretation.Legacy.Interp
+import all StrataBoole.Boole.Interpretation.Source
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
 
 /-! Compile Boole statements to predicate transformers. Track writes alongside
 the transformer to determine which variables a loop can change. -/

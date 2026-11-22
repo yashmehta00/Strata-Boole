@@ -4,10 +4,10 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.CoreReference
-import all StrataBoole.Boole.Semantics.CoreReference
+public import StrataBoole.Boole.Interpretation.Denotational.CoreReference
+import all StrataBoole.Boole.Interpretation.Denotational.CoreReference
 
-import all StrataBoole.Boole.Semantics.Semantics
+import all StrataBoole.Boole.Interpretation.Legacy.Semantics
 import all Init.Util
 import all StrataDDM.AST
 import all Strata.Languages.Core.ProcedureType
@@ -18,7 +18,8 @@ import all Strata.Languages.Core.ProgramWF
 import all Strata.Languages.Core.Program
 import all Strata.Languages.Core.Verifier
 import all Strata.Transform.GenOpaqueTypeParams
-import all StrataBoole.Boole.Interp
+import all StrataBoole.Boole.Interpretation.Legacy.Interp
+import all StrataBoole.Boole.Interpretation.Source
 import all StrataBoole.Verify
 import Std.Data.HashMap.Lemmas
 import all Strata.Util.ListMap

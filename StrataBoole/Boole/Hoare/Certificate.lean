@@ -7,8 +7,9 @@ module
 public import StrataBoole.Boole.Hoare.Compile
 import all StrataBoole.Boole.Hoare.Compile
 import all StrataBoole.Boole.Hoare.Rules
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Types
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
+import all StrataBoole.Boole.Interpretation.Types
 public meta import Lean
 
 /-! Procedure certificates and the adapter to Lean's `vcgen`. -/

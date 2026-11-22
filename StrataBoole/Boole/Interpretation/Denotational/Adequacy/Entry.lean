@@ -4,16 +4,18 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole.Semantics.CoreReference
-import all StrataBoole.Boole.Semantics.CoreReference
-public import StrataBoole.Boole.Semantics.Adequacy.Lowering
-import all StrataBoole.Boole.Semantics.Adequacy.Lowering
+public import StrataBoole.Boole.Interpretation.Denotational.CoreReference
+import all StrataBoole.Boole.Interpretation.Denotational.CoreReference
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
 import all StrataBoole.Verify
-import all StrataBoole.Boole.Interp
-import StrataBoole.Boole.Semantics.Adequacy.SourceState
-import StrataBoole.Boole.Semantics.Adequacy.SourceInterface
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Types
+import all StrataBoole.Boole.Interpretation.Legacy.Interp
+import all StrataBoole.Boole.Interpretation.Source
+import StrataBoole.Boole.Interpretation.Denotational.Adequacy.SourceState
+import StrataBoole.Boole.Interpretation.Denotational.Adequacy.SourceInterface
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
+import all StrataBoole.Boole.Interpretation.Types
 import all Strata.DL.Lambda.LExprTypeEnv
 import all Strata.DL.Lambda.LExprAliasFree
 import Strata.DL.Lambda.LTyUnify

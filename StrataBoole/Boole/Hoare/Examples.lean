@@ -8,9 +8,11 @@ module
 import all StrataBoole.Boole.Hoare.Certificate
 import all StrataBoole.Boole.Hoare.Compile
 import all StrataBoole.Boole.Hoare.Rules
-import all StrataBoole.Boole.Runtime
-import all StrataBoole.Boole.Interp
-import all StrataBoole.Boole.Types
+import all StrataBoole.Boole.Interpretation.Legacy.Runtime
+import all StrataBoole.Boole.Interpretation.Runtime
+import all StrataBoole.Boole.Interpretation.Legacy.Interp
+import all StrataBoole.Boole.Interpretation.Source
+import all StrataBoole.Boole.Interpretation.Types
 import all StrataDDM.AST
 import StrataDDM.Integration.Lean.HashCommands
 import StrataBoole.Boole.Hoare.Reflect

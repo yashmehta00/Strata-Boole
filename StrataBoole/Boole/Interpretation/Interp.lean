@@ -4,317 +4,278 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
 module
 
-public import StrataBoole.Boole
-public import StrataBoole.Boole.Types
-import Strata.Util.Tactics
+public import StrataBoole.Boole.Interpretation.Expressions
 
-/-! # Compositional interpretation of Boole syntax
-
-`interpExpr`, `interpStmt` and the other structural functions combine the
-meanings of immediate subterms using a supplied `Interpretation`. Instantiating
-them with `denotation` in `Semantics.lean` defines Boole's mathematical meaning.
-No Core syntax or lowering helpers are used here.
-
-`Scope` is a lexical environment for resolving source bindings, not a runtime
-store. The `Except` result reports unsupported syntax or invalid bindings; it
-is distinct from a runtime error in the resulting meaning.
-
-The fragment includes built-in types, primitive and selected
-compound expressions, globals, structured procedures, local declarations,
-assignments, checks, havoc, branches, loops and named exits.
-Unsupported constructs are rejected during interpretation, never treated as `skip`.
--/
+/-! Resolve source bindings and types, then fold expressions and statements
+into their meanings. Expression cases use the mathematical operations in
+`Expressions.lean`. Statement cases use a supplied command algebra.
+The lexical scope exists only during construction. -/
 
 public section
-namespace Strata.Boole
+namespace Strata.Boole.Interpretation
 open StrataDDM
 
-/-- A source variable declaration. Names are kept for diagnostics and interfaces. -/
-structure Binding where
-  name : String
+/-- The index of an expression parsed without a known expected type.
+This pair is used only while constructing meanings. -/
+structure SomeExpr where
   sort : ValueType
-  deriving DecidableEq, Repr
+  meaning : Expr sort
 
-/-- Global and local variables occupy different source stores. -/
-inductive Variable where
-  | global (name : String)
-  | local (name : String)
-  deriving DecidableEq, Repr
+def SomeExpr.expect (range : SourceRange) (t : ValueType) (expression : SomeExpr) :
+    InterpM (Expr t) :=
+  if h : expression.sort = t then pure (h ▸ expression.meaning)
+  else reject range s!"Expected {repr t}, got {repr expression.sort}"
 
-inductive UnaryOp where
-  | neg | not | intToNat | natToInt
-  deriving DecidableEq, Repr
+private inductive Arithmetic where
+  | add | sub | mul
 
-inductive BinaryOp where
-  | add | sub | mul | div | mod | eq | ne | lt | le | gt | ge
-  | and | or | implies | iff
-  deriving DecidableEq, Repr
+private def Arithmetic.apply [Add α] [Sub α] [Mul α] : Arithmetic → α → α → α
+  | .add => (· + ·)
+  | .sub => (· - ·)
+  | .mul => (· * ·)
 
-/-- An individual specification clause, before or after interpretation. -/
-structure Clause (E : Type) where
-  label : String
-  free : Bool
-  condition : E
+private def arithmetic (range : SourceRange) (op : Arithmetic)
+    (t : ValueType) (x y : Expr t) : InterpM SomeExpr :=
+  match t with
+  | .int => pure ⟨.int, Expr.zip op.apply x y⟩
+  | .nat => pure ⟨.nat, Expr.zip op.apply x y⟩
+  | .real => pure ⟨.real, Expr.zip op.apply x y⟩
+  | .bitvec n => pure ⟨.bitvec n, Expr.zip op.apply x y⟩
+  | _ => reject range s!"Arithmetic is undefined for {repr t}"
 
-/-- Contracts remain separate from procedure-body execution. -/
-structure Contract (E : Type) where
-  requires : List (Clause E) := []
-  ensures : List (Clause E) := []
-  modifies : List String := []
+private inductive Comparison where
+  | lt | le | gt | ge
 
-/-- A procedure's interface, contract meanings and body meaning. -/
-structure InterpProcedure (E S : Type) where
-  name : String
-  inputs : List Binding
-  outputs : List Binding
-  contract : Contract E
-  body : S
+private def Comparison.apply [LT α] [LE α] [DecidableLT α] [DecidableLE α] :
+    Comparison → α → α → Bool
+  | .lt => fun x y => decide (x < y)
+  | .le => fun x y => decide (x ≤ y)
+  | .gt => fun x y => decide (y < x)
+  | .ge => fun x y => decide (y ≤ x)
 
-/-- Program declarations containing meanings, not another statement AST. -/
-structure InterpProgram (E S : Type) where
-  globals : List Binding
-  procedures : List (InterpProcedure E S)
+private def comparison (range : SourceRange) (op : Comparison)
+    (t : ValueType) (x y : Expr t) : InterpM SomeExpr :=
+  match t with
+  | .int => pure ⟨.bool, Expr.zip op.apply x y⟩
+  | .nat => pure ⟨.bool, Expr.zip op.apply x y⟩
+  | .real => pure ⟨.bool, Expr.zip op.apply x y⟩
+  | .bitvec n => pure ⟨.bool, Expr.zip (a := .bitvec n) (b := .bitvec n) (fun a b => op.apply a.toNat b.toNat) x y⟩
+  | _ => reject range s!"Ordering is undefined for {repr t}"
 
-/-- A semantic algebra: domains for expressions and statements, together with
-the operations that combine their meanings. The structural `interp` functions
-are parameterized by this algebra; `Semantics.lean` supplies the Boole domains
-and operations. Constructing a meaning does not execute a procedure body. -/
-structure Interpretation where
-  supportsType : ValueType → Bool := fun _ => true
-  Expression : Type
-  Statement : Type
-  literal : Value → Expression
-  apply : Expression → Expression → Expression
-  mapGet : Expression → Expression → Expression
-  mapSet : Expression → Expression → Expression → Expression
-  mapConst : ValueType → Expression → Expression
-  sequenceEmpty : ValueType → Expression
-  sequenceLength : Expression → Expression
-  sequenceAppend : Expression → Expression → Expression
-  sequenceBuild : Expression → Expression → Expression
-  read : Variable → Expression
-  unary : UnaryOp → Expression → Expression
-  binary : BinaryOp → Expression → Expression → Expression
-  conditional : Expression → Expression → Expression → Expression
-  old : Expression → Expression
-  skip : Statement
-  seq : Statement → Statement → Statement
-  declare : Binding → Option Expression → Statement
-  assign : Variable → Expression → Statement
-  havoc : Variable → ValueType → Statement
-  assertion : String → Expression → Statement
-  assumption : Expression → Statement
-  branch : Option Expression → Statement → Statement → Statement
-  loop : Option Expression → Statement → Statement
-  scope : Statement → Statement
-  block : String → Statement → Statement
-  exit : String → Statement
+private def negation (range : SourceRange) (t : ValueType) (x : Expr t) : InterpM SomeExpr :=
+  match t with
+  | .int => pure ⟨.int, Expr.map Neg.neg x⟩
+  | .real => pure ⟨.real, Expr.map Neg.neg x⟩
+  | .bitvec n => pure ⟨.bitvec n, Expr.map Neg.neg x⟩
+  | _ => reject range s!"Negation is undefined for {repr t}"
 
-/-- An unsupported construct or invalid source binding, with its source location. -/
-structure InterpError where
-  range : SourceRange
-  message : String
-  deriving Repr
+private def equality (equal : Equality) (range : SourceRange) (t : ValueType) :
+    InterpM (t.denote → t.denote → Bool) := do
+  let some test := equal t | reject range s!"No executable equality for {repr t}"
+  return test
 
-/-- Source bindings visible while interpreting a statement. Bound-variable
-indices refer to `locals` in reverse declaration order, as in the parsed AST.
-Shadowing is rejected in this fragment, matching the target's fresh-slot rules. -/
-structure Scope where
-  names : GlobalContext := {}
-  globals : List Binding := []
-  locals : List Binding := []
-  modifies : List String := []
-  labels : List String := []
-  supportsType : ValueType → Bool := fun _ => true
+private def withOperands (range : SourceRange) (ty : Boole.Type)
+    (left right : InterpM SomeExpr)
+    (combine : (t : ValueType) → Expr t → Expr t → InterpM SomeExpr) :
+    InterpM SomeExpr := do
+  let t ← sourceSort ty
+  combine t (← (← left).expect range t) (← (← right).expect range t)
 
-abbrev InterpM := StateT Scope (Except InterpError)
+private def lift1 (range : SourceRange) (a b : ValueType) (f : a.denote → b.denote)
+    (operand : InterpM SomeExpr) : InterpM SomeExpr := do
+  return ⟨b, Expr.map f (← (← operand).expect range a)⟩
 
-private def reject (range : SourceRange) (message : String) : InterpM α :=
-  throw ⟨range, message⟩
+private def lift2 (range : SourceRange) (a b c : ValueType)
+    (f : a.denote → b.denote → c.denote) (left right : InterpM SomeExpr) :
+    InterpM SomeExpr := do
+  return ⟨c, Expr.zip f (← (← left).expect range a) (← (← right).expect range b)⟩
 
-/-- Resolve the built-in types admitted by the interpretation. -/
-private def sourceSort (ty : Boole.Type) : InterpM ValueType := do
-  let result ← match ty with
-    | .bool _ => pure .bool | .int _ => pure .int | .nat _ => pure .nat
-    | .real _ => pure .real | .string _ => pure .string | .regex _ => pure .regex
-    | .bv _ width => match width with
-      | .W1 _ => pure (.bitvec 1) | .W8 _ => pure (.bitvec 8)
-      | .W16 _ => pure (.bitvec 16) | .W32 _ => pure (.bitvec 32)
-      | .W64 _ => pure (.bitvec 64) | .W128 _ => pure (.bitvec 128)
-      | _ => reject default "A concrete bitvector width is required"
-    | .arrow _ a b => ValueType.arrow <$> sourceSort a <*> sourceSort b
-    | .Map _ value key => ValueType.map <$> sourceSort key <*> sourceSort value
-    | .Sequence _ element => ValueType.sequence <$> sourceSort element
-    | .Set _ element => ValueType.set <$> sourceSort element
-    | .tvar range _ | .bvar range _ =>
-        reject range "Type variables are outside the denotational fragment"
-    | .fvar range index arguments =>
-        let some name := (← get).names.nameOf? index
-          | reject range "Unknown type constructor"
-        let arguments ← arguments.toList.reverse.mapM sourceSort
-        if name == "Set" then
-          match arguments with
-          | [element] => pure (.set element)
-          | _ => reject range "Set requires one type argument"
-        else reject range s!"Unsupported named type '{name}'"
-    | _ => reject default "Width markers are not standalone value types"
-  if !(← get).supportsType result then reject default s!"Type has no interpretation in this model: {repr result}"
-  return result
-termination_by sizeOf ty
-decreasing_by
-  all_goals first
-    | (simp_all; omega)
-    | (cases arguments; simp_all; term_by_mem)
+private def bitvector (width : Nat) (n : Nat) : SomeExpr :=
+  ⟨.bitvec width, Expr.constant (.bitvec width) (BitVec.ofNat width n)⟩
 
-private def withScope (action : InterpM α) : InterpM α := do
-  let saved ← get
-  let result ← action
-  set saved
-  return result
-
-private def findBinding (name : String) (bindings : List Binding) : Option Binding :=
-  bindings.find? (fun b => b.name == name)
-
-private def fresh (range : SourceRange) (binding : Binding) : InterpM Unit := do
-  let scope ← get
-  if binding.name.isEmpty || binding.name.contains ' ' then
-    reject range "Variable names must be nonempty and contain no spaces"
-  if (findBinding binding.name (scope.locals ++ scope.globals)).isSome then
-    reject range s!"Duplicate or shadowed variable '{binding.name}' is outside this fragment"
-
-private def addLocal (range : SourceRange) (name : String) (ty : Boole.Type) : InterpM Binding := do
-  let binding : Binding := ⟨name, ← sourceSort ty⟩
-  fresh range binding
-  modify fun scope => { scope with locals := scope.locals ++ [binding] }
-  return binding
-
-private def resolveVariable (range : SourceRange) (name : String) (writing := false) : InterpM (Variable × ValueType) := do
-  let scope ← get
-  if let some binding := findBinding name scope.locals then
-    return (.local name, binding.sort)
-  if let some binding := findBinding name scope.globals then
-    if writing && !scope.modifies.contains name then
-      reject range s!"Global '{name}' is not in this procedure's modifies clause"
-    return (.global name, binding.sort)
-  reject range s!"Unknown variable '{name}'"
-
-private def sourceLabel (range : SourceRange) (label : Option (BooleDDM.Label SourceRange)) : String :=
-  match label with
-  | some (.label _ name) => name.val
-  | none => s!"at_{range.start}"
-
-private def interpTypedUnary (I : Interpretation) (op : UnaryOp) (ty : Boole.Type)
-    (operand : InterpM I.Expression) : InterpM I.Expression := do
-  let _ ← sourceSort ty
-  return I.unary op (← operand)
-
-private def interpTypedBinary (I : Interpretation) (op : BinaryOp) (ty : Boole.Type)
-    (left right : InterpM I.Expression) : InterpM I.Expression := do
-  let _ ← sourceSort ty
-  return I.binary op (← left) (← right)
-
-/-- Interpret an expression using source variable bindings and source operations. -/
-def interpExpr (I : Interpretation) (e : Boole.Expr) : InterpM I.Expression := do
-  match e with
-  | .natToInt _ value => return I.literal (.int (Int.ofNat value.val))
-  | .strLit _ value => return I.literal (.string value.val)
-  | .bv1Lit _ n => return I.literal (.bitvec 1 (BitVec.ofNat 1 n.val))
-  | .bv8Lit _ n => return I.literal (.bitvec 8 (BitVec.ofNat 8 n.val))
-  | .bv16Lit _ n => return I.literal (.bitvec 16 (BitVec.ofNat 16 n.val))
-  | .bv32Lit _ n => return I.literal (.bitvec 32 (BitVec.ofNat 32 n.val))
-  | .bv64Lit _ n => return I.literal (.bitvec 64 (BitVec.ofNat 64 n.val))
-  | .bv128Lit _ n => return I.literal (.bitvec 128 (BitVec.ofNat 128 n.val))
-  | .app _ f a => return I.apply (← interpExpr I f) (← interpExpr I a)
-  | .nat_fromInt _ a => interpTypedUnary I .intToNat (.nat default) (interpExpr I a)
-  | .nat_toInt _ a => interpTypedUnary I .natToInt (.nat default) (interpExpr I a)
-  | .nat_add _ a b => interpTypedBinary I .add (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_sub _ a b => interpTypedBinary I .sub (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_mul _ a b => interpTypedBinary I .mul (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_div _ a b => interpTypedBinary I .div (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_mod _ a b => interpTypedBinary I .mod (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_lt _ a b => interpTypedBinary I .lt (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_le _ a b => interpTypedBinary I .le (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_gt _ a b => interpTypedBinary I .gt (.nat default) (interpExpr I a) (interpExpr I b)
-  | .nat_ge _ a b => interpTypedBinary I .ge (.nat default) (interpExpr I a) (interpExpr I b)
-  | .map_get _ key value m index =>
-      let _ ← sourceSort (.Map default value key)
-      return I.mapGet (← interpExpr I m) (← interpExpr I index)
-  | .map_set _ key value m index newValue =>
-      let _ ← sourceSort (.Map default value key)
-      return I.mapSet (← interpExpr I m) (← interpExpr I index) (← interpExpr I newValue)
-  | .map_const _ key value initializer =>
-      let _ ← sourceSort (.Map default value key)
-      let key ← sourceSort key
-      return I.mapConst key (← interpExpr I initializer)
-  | .seq_empty _ element =>
-      let _ ← sourceSort (.Sequence default element)
-      return I.sequenceEmpty (← sourceSort element)
-  | .seq_empty_int _ =>
-      let _ ← sourceSort (.Sequence default (.int default))
-      return I.sequenceEmpty .int
-  | .seq_length _ element a =>
-      let _ ← sourceSort (.Sequence default element)
-      return I.sequenceLength (← interpExpr I a)
-  | .seq_append _ element a b =>
-      let _ ← sourceSort (.Sequence default element)
-      return I.sequenceAppend (← interpExpr I a) (← interpExpr I b)
-  | .seq_build _ element a b =>
-      let _ ← sourceSort (.Sequence default element)
-      return I.sequenceBuild (← interpExpr I a) (← interpExpr I b)
-  | .btrue _ => return I.literal (.bool true)
-  | .bfalse _ => return I.literal (.bool false)
+/-- Interpret the immediate subexpressions and combine their typed values.
+Source types select overloaded operations during construction. -/
+def interpExpr (equal : Equality) (expression : Boole.Expr) : InterpM SomeExpr := do
+  match expression with
+  | .natToInt _ n => return ⟨.int, Expr.constant .int (Int.ofNat n.val)⟩
+  | .strLit _ s => return ⟨.string, Expr.constant .string s.val⟩
+  | .bv1Lit _ n => return bitvector 1 n.val
+  | .bv8Lit _ n => return bitvector 8 n.val
+  | .bv16Lit _ n => return bitvector 16 n.val
+  | .bv32Lit _ n => return bitvector 32 n.val
+  | .bv64Lit _ n => return bitvector 64 n.val
+  | .bv128Lit _ n => return bitvector 128 n.val
+  | .btrue _ => return ⟨.bool, Expr.constant .bool true⟩
+  | .bfalse _ => return ⟨.bool, Expr.constant .bool false⟩
   | .fvar range index =>
       let some name := (← get).names.nameOf? index
         | reject range s!"Unknown free-variable index {index}"
       let some binding := findBinding name (← get).globals
         | reject range s!"Free variable '{name}' is not a declared global"
-      return I.read (.global binding.name)
+      return ⟨binding.sort, Expr.read binding.sort (.global name)⟩
   | .bvar range index =>
       let some binding := (← get).locals.reverse[index]?
         | reject range s!"Unknown bound-variable index {index}"
-      return I.read (.local binding.name)
-  | .not _ a => return I.unary .not (← interpExpr I a)
-  | .neg_expr _ ty a => interpTypedUnary I .neg ty (interpExpr I a)
-  | .add_expr _ ty a b => interpTypedBinary I .add ty (interpExpr I a) (interpExpr I b)
-  | .sub_expr _ ty a b => interpTypedBinary I .sub ty (interpExpr I a) (interpExpr I b)
-  | .mul_expr _ ty a b => interpTypedBinary I .mul ty (interpExpr I a) (interpExpr I b)
-  | .le _ ty a b => interpTypedBinary I .le ty (interpExpr I a) (interpExpr I b)
-  | .lt _ ty a b => interpTypedBinary I .lt ty (interpExpr I a) (interpExpr I b)
-  | .ge _ ty a b => interpTypedBinary I .ge ty (interpExpr I a) (interpExpr I b)
-  | .gt _ ty a b => interpTypedBinary I .gt ty (interpExpr I a) (interpExpr I b)
-  | .equal _ ty a b => interpTypedBinary I .eq ty (interpExpr I a) (interpExpr I b)
-  | .not_equal _ ty a b => interpTypedBinary I .ne ty (interpExpr I a) (interpExpr I b)
-  | .and _ a b => return I.binary .and (← interpExpr I a) (← interpExpr I b)
-  | .or _ a b => return I.binary .or (← interpExpr I a) (← interpExpr I b)
-  | .implies _ a b => return I.binary .implies (← interpExpr I a) (← interpExpr I b)
-  | .equiv _ a b => return I.binary .iff (← interpExpr I a) (← interpExpr I b)
-  | .if _ ty c yes no =>
-      let _ ← sourceSort ty
-      return I.conditional (← interpExpr I c) (← interpExpr I yes) (← interpExpr I no)
-  | .old _ ty a =>
-      let _ ← sourceSort ty
-      return I.old (← interpExpr I a)
-  | _ => reject default s!"Unsupported expression: {repr e}"
-termination_by sizeOf e
+      return ⟨binding.sort, Expr.read binding.sort (.local binding.name)⟩
+  | .app range f a =>
+      let function ← interpExpr equal f
+      match function with
+      | ⟨.arrow domain codomain, fn⟩ =>
+          return ⟨codomain, Expr.zip (a := .arrow domain codomain) (fun g x => g x) fn
+            (← (← interpExpr equal a).expect range domain)⟩
+      | _ => reject range "Expected a function"
+  | .nat_fromInt range a => lift1 range .int .nat Int.toNat (interpExpr equal a)
+  | .nat_toInt range a => lift1 range .nat .int Int.ofNat (interpExpr equal a)
+  | .nat_add range a b => lift2 range .nat .nat .nat (· + ·) (interpExpr equal a) (interpExpr equal b)
+  | .nat_sub range a b => lift2 range .nat .nat .nat (· - ·) (interpExpr equal a) (interpExpr equal b)
+  | .nat_mul range a b => lift2 range .nat .nat .nat (· * ·) (interpExpr equal a) (interpExpr equal b)
+  | .nat_div range a b => lift2 range .nat .nat .nat (· / ·) (interpExpr equal a) (interpExpr equal b)
+  | .nat_mod range a b => lift2 range .nat .nat .nat (· % ·) (interpExpr equal a) (interpExpr equal b)
+  | .nat_lt range a b => lift2 range .nat .nat .bool Comparison.lt.apply (interpExpr equal a) (interpExpr equal b)
+  | .nat_le range a b => lift2 range .nat .nat .bool Comparison.le.apply (interpExpr equal a) (interpExpr equal b)
+  | .nat_gt range a b => lift2 range .nat .nat .bool Comparison.gt.apply (interpExpr equal a) (interpExpr equal b)
+  | .nat_ge range a b => lift2 range .nat .nat .bool Comparison.ge.apply (interpExpr equal a) (interpExpr equal b)
+  | .map_get range key value m k =>
+      let _ ← sourceSort (.Map range value key)
+      let key ← sourceSort key
+      let value ← sourceSort value
+      lift2 range (.map key value) key value (fun f x => f x) (interpExpr equal m) (interpExpr equal k)
+  | .map_set range key value m k v =>
+      let _ ← sourceSort (.Map range value key)
+      let key ← sourceSort key
+      let value ← sourceSort value
+      let m ← (← interpExpr equal m).expect range (.map key value)
+      let k ← (← interpExpr equal k).expect range key
+      let v ← (← interpExpr equal v).expect range value
+      let test ← equality equal range key
+      return ⟨.map key value, Expr.mapSet test m k v⟩
+  | .map_const range key value initializer =>
+      let _ ← sourceSort (.Map range value key)
+      let key ← sourceSort key
+      let value ← sourceSort value
+      lift1 range value (.map key value) (fun v _ => v) (interpExpr equal initializer)
+  | .seq_empty range element =>
+      let _ ← sourceSort (.Sequence range element)
+      let element ← sourceSort element
+      return ⟨.sequence element, Expr.constant (.sequence element) []⟩
+  | .seq_empty_int range =>
+      let _ ← sourceSort (.Sequence range (.int range))
+      return ⟨.sequence .int, Expr.constant (.sequence .int) []⟩
+  | .seq_length range element a =>
+      let _ ← sourceSort (.Sequence range element)
+      let element ← sourceSort element
+      lift1 range (.sequence element) .int (fun xs => Int.ofNat xs.length) (interpExpr equal a)
+  | .seq_append range element a b =>
+      let _ ← sourceSort (.Sequence range element)
+      let element ← sourceSort element
+      let sequence := ValueType.sequence element
+      lift2 range sequence sequence sequence List.append (interpExpr equal a) (interpExpr equal b)
+  | .seq_build range element a b =>
+      let _ ← sourceSort (.Sequence range element)
+      let element ← sourceSort element
+      let sequence := ValueType.sequence element
+      lift2 range sequence element sequence (fun xs x => xs ++ [x]) (interpExpr equal a) (interpExpr equal b)
+  | .not range a => lift1 range .bool .bool (! ·) (interpExpr equal a)
+  | .neg_expr range ty a =>
+      let t ← sourceSort ty
+      negation range t (← (← interpExpr equal a).expect range t)
+  | .add_expr range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (arithmetic range .add)
+  | .sub_expr range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (arithmetic range .sub)
+  | .mul_expr range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (arithmetic range .mul)
+  | .lt range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (comparison range .lt)
+  | .le range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (comparison range .le)
+  | .gt range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (comparison range .gt)
+  | .ge range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) (comparison range .ge)
+  | .equal range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) fun t x y => do
+        return ⟨.bool, Expr.zip (← equality equal range t) x y⟩
+  | .not_equal range ty a b =>
+      withOperands range ty (interpExpr equal a) (interpExpr equal b) fun t x y => do
+        let test ← equality equal range t
+        return ⟨.bool, Expr.zip (fun a b => !test a b) x y⟩
+  | .and range a b => lift2 range .bool .bool .bool (· && ·) (interpExpr equal a) (interpExpr equal b)
+  | .or range a b => lift2 range .bool .bool .bool (· || ·) (interpExpr equal a) (interpExpr equal b)
+  | .implies range a b => lift2 range .bool .bool .bool (fun a b => !a || b) (interpExpr equal a) (interpExpr equal b)
+  | .equiv range a b => lift2 range .bool .bool .bool (· == ·) (interpExpr equal a) (interpExpr equal b)
+  | .if range ty c yes no =>
+      let t ← sourceSort ty
+      return ⟨t, Expr.ite (← (← interpExpr equal c).expect range .bool)
+        (← (← interpExpr equal yes).expect range t) (← (← interpExpr equal no).expect range t)⟩
+  | .old range ty a =>
+      let t ← sourceSort ty
+      return ⟨t, Expr.old (← (← interpExpr equal a).expect range t)⟩
+  | _ => reject default s!"Unsupported expression: {repr expression}"
+termination_by sizeOf expression
 
-private def bindings : BooleDDM.DeclList SourceRange → List (BooleDDM.Bind SourceRange)
-  | .declAtom _ binding => [binding]
-  | .declPush _ rest binding => bindings rest ++ [binding]
+/-- An absent guard is a nondeterministic choice of true or false. -/
+abbrev Guard := Option (Expr .bool)
+
+structure CommandAlgebra (Command : Type) where
+  skip : Command
+  seq : Command → Command → Command
+  declare : (binding : Binding) → Option (Expr binding.sort) → Command
+  assign : {t : ValueType} → Variable → Expr t → Command
+  havoc : Variable → ValueType → Command
+  assertion : String → Expr .bool → Command
+  assumption : Expr .bool → Command
+  branch : Guard → Command → Command → Command
+  loop : Guard → Command → Command
+  scope : Command → Command
+  block : String → Command → Command
+  exit : String → Command
+
+abbrev Procedure (Command : Type) := InterpProcedure (Expr .bool) Command
+abbrev Program (Command : Type) := InterpProgram (Expr .bool) Command
+
+/-! The deterministic state effects used before either backend handles control. -/
+namespace Effect
+
+def assign (reference : Variable) (expression : Expr t) (state : State) : Result :=
+  match Expr.read t reference state with
+  | .error reason => (.runtimeError reason, state)
+  | .ok _ => match expression state with
+    | .ok value => (.normal, state.update reference ⟨t, value⟩)
+    | .error reason => (.runtimeError reason, state)
+
+def declare (binding : Binding) (initializer : Expr binding.sort) (state : State) : Result :=
+  if (state.locals.lookup binding.name).isSome then
+    (.runtimeError (.duplicateLocal binding.name), state)
+  else match initializer state with
+    | .ok value => (.normal, { state with locals := state.locals ++ [(binding.name, ⟨binding.sort, value⟩)] })
+    | .error reason => (.runtimeError reason, state)
+
+def assertion (label : String) (expression : Expr .bool) (state : State) : Result :=
+  match expression state with
+  | .ok true => (.normal, state)
+  | .ok false => (.assertionFailure label, state)
+  | .error reason => (.runtimeError reason, state)
+
+end Effect
+
+/-! The source fold constructs command meanings using the supplied algebra.
+Source expressions are given typed meanings before entering the command operations. -/
 
 -- The annotations must be supported expressions, but do not control execution.
-private def checkInvariants (I : Interpretation) : BooleDDM.Invariants SourceRange → InterpM Unit
+private def checkInvariants (equal : Equality) : BooleDDM.Invariants SourceRange → InterpM Unit
   | .nilInvariants _ => pure ()
-  | .consInvariants _ _ expression rest => do
-      let _ ← interpExpr I expression
-      checkInvariants I rest
+  | .consInvariants range _ expression rest => do
+      let _ ← (← interpExpr equal expression).expect range .bool
+      checkInvariants equal rest
 
-private def condition (I : Interpretation) : BooleDDM.ExprOrNondet SourceRange → InterpM (Option I.Expression)
-  | .condDet _ expression => return some (← interpExpr I expression)
+private def condition (equal : Equality) : BooleDDM.ExprOrNondet SourceRange → InterpM (Guard)
+  | .condDet range expression => return some (← (← interpExpr equal expression).expect range .bool)
   | .condNondet _ => pure none
 
 mutual
   /-- Interpret a statement; declarations extend the lexical scope of its siblings. -/
-  def interpStmt (I : Interpretation) (statement : BooleDDM.Statement SourceRange) : InterpM I.Statement := do
+  def interpStmt (I : CommandAlgebra C) (equal : Equality) (statement : BooleDDM.Statement SourceRange) : InterpM C := do
     match statement with
     | .varStatement range _ declarations =>
         let mut result := I.skip
@@ -324,35 +285,35 @@ mutual
           result := I.seq result (I.declare binding none)
         return result
     | .initStatement range _ ty name expression =>
-        let expression ← interpExpr I expression
+        let expression ← interpExpr equal expression
         let binding ← addLocal range name.val ty
-        return I.declare binding (some expression)
+        return I.declare binding (some (← expression.expect range binding.sort))
     | .assign range _ _ (.lhsIdent _ name) expression =>
         let target ← resolveVariable range name.val true
-        return I.assign target.1 (← interpExpr I expression)
+        return I.assign target.1 (← (← interpExpr equal expression).expect range target.2)
     | .havoc_statement range _ name =>
         let target ← resolveVariable range name.val true
         return I.havoc target.1 target.2
     | .assert range annotations label expression =>
         if annotations.val.isSome then reject range "Assertion metadata is outside this fragment"
-        return I.assertion (sourceLabel range label.val) (← interpExpr I expression)
-    | .assume _ _ _ expression =>
-        return I.assumption (← interpExpr I expression)
+        return I.assertion (sourceLabel range label.val) (← (← interpExpr equal expression).expect range .bool)
+    | .assume range _ _ expression =>
+        return I.assumption (← (← interpExpr equal expression).expect range .bool)
     | .if_statement _ _ guard yes no =>
-        let guard ← condition I guard
-        let yes ← interpBlock I yes
-        let no ← match no with | .else0 _ => pure I.skip | .else1 _ body => interpBlock I body
+        let guard ← condition equal guard
+        let yes ← interpBlock I equal yes
+        let no ← match no with | .else0 _ => pure I.skip | .else1 _ body => interpBlock I equal body
         return I.branch guard yes no
     | .while_statement _ _ guard decreases invariants body =>
-        let guard ← condition I guard
+        let guard ← condition equal guard
         if let some (.measure_mk _ expression) := decreases.val then
-          let _ ← interpExpr I expression
-        checkInvariants I invariants
-        return I.loop guard (← interpBlock I body)
+          let _ ← interpExpr equal expression
+        checkInvariants equal invariants
+        return I.loop guard (← interpBlock I equal body)
     | .block_statement _ _ name body =>
         let body ← withScope do
           modify fun scope => { scope with labels := name.val :: scope.labels }
-          interpBlock I body
+          interpBlock I equal body
         return I.block name.val body
     | .exit_statement range _ name =>
         if !(← get).labels.contains name.val then reject range s!"Unbound exit label '{name.val}'"
@@ -361,17 +322,17 @@ mutual
     termination_by sizeOf statement
 
   /-- Compose a statement list in source order. -/
-  def interpStmts (I : Interpretation) (statements : List (BooleDDM.Statement SourceRange)) : InterpM I.Statement := do
+  def interpStmts (I : CommandAlgebra C) (equal : Equality) (statements : List (BooleDDM.Statement SourceRange)) : InterpM C := do
     match statements with
     | [] => return I.skip
-    | statement :: rest => return I.seq (← interpStmt I statement) (← interpStmts I rest)
+    | statement :: rest => return I.seq (← interpStmt I equal statement) (← interpStmts I equal rest)
     termination_by sizeOf statements
 
   /-- A block restores lexical scope now and runtime local-variable scope later. -/
-  def interpBlock (I : Interpretation) (block : BooleDDM.Block SourceRange) : InterpM I.Statement :=
+  def interpBlock (I : CommandAlgebra C) (equal : Equality) (block : BooleDDM.Block SourceRange) : InterpM C :=
     withScope do
       match block with
-      | .block _ ⟨_, statements⟩ => return I.scope (← interpStmts I statements.toList)
+      | .block _ ⟨_, statements⟩ => return I.scope (← interpStmts I equal statements.toList)
     termination_by sizeOf block
     decreasing_by
       cases statements
@@ -381,8 +342,8 @@ end
 
 /-- Interpret requires/ensures as expressions, retaining clause identity and
 free attributes. Modifies is a source-level permission on global writes. -/
-def interpContract (I : Interpretation) (specification : Option (BooleDDM.Spec SourceRange)) : InterpM (Contract I.Expression) := do
-  let mut result : Contract I.Expression := {}
+def interpContract (equal : Equality) (specification : Option (BooleDDM.Spec SourceRange)) : InterpM (Contract (Expr .bool)) := do
+  let mut result : Contract (Expr .bool) := {}
   if let some (.spec_mk _ elements) := specification then
     for element in elements.val do
       match element with
@@ -393,50 +354,38 @@ def interpContract (I : Interpretation) (specification : Option (BooleDDM.Spec S
             if !result.modifies.contains name.val then
               result := { result with modifies := result.modifies ++ [name.val] }
       | .requires_spec range label free expression =>
-          let clause := ⟨sourceLabel range label.val, free.val.isSome, ← interpExpr I expression⟩
+          let clause := ⟨sourceLabel range label.val, free.val.isSome, ← (← interpExpr equal expression).expect range .bool⟩
           result := { result with requires := result.requires ++ [clause] }
       | .ensures_spec range label free expression =>
-          let clause := ⟨sourceLabel range label.val, free.val.isSome, ← interpExpr I expression⟩
+          let clause := ⟨sourceLabel range label.val, free.val.isSome, ← (← interpExpr equal expression).expect range .bool⟩
           result := { result with ensures := result.ensures ++ [clause] }
   return result
 
-private def inputBindings (parameters : BooleDDM.Bindings SourceRange) : InterpM (List Binding) := do
-  let .mkBindings _ parameters := parameters
-  parameters.val.toList.mapM fun
-    | .mkBinding range name (.expr ty) => addLocal range name.val ty
-    | parameter => reject default s!"Unsupported parameter: {repr parameter}"
-
-private def outputBindings : BooleDDM.MonoDeclList SourceRange → InterpM (List Binding)
-  | .monoDeclAtom range (.mono_bind_mk _ name ty) => do
-      return [← addLocal range name.val ty]
-  | .monoDeclPush range rest (.mono_bind_mk _ name ty) => do
-      let rest ← outputBindings rest
-      return rest ++ [← addLocal range name.val ty]
-
 /-- Interpret a structured procedure, including its independent contract meaning. -/
-def interpProc (I : Interpretation) (range : SourceRange) (name : String)
+def interpProc (I : CommandAlgebra C) (equal : Equality) (range : SourceRange) (name : String)
     (typeArgs : Option (BooleDDM.TypeArgs SourceRange))
     (parameters : BooleDDM.Bindings SourceRange)
     (outputs : Option (BooleDDM.MonoDeclList SourceRange))
     (specification : Option (BooleDDM.Spec SourceRange))
-    (body : Option (BooleDDM.Block SourceRange)) : InterpM (InterpProcedure I.Expression I.Statement) :=
+    (body : Option (BooleDDM.Block SourceRange)) : InterpM (Procedure C) :=
   withScope do
     if typeArgs.isSome then reject range "Polymorphic procedures are outside this fragment"
     let inputs ← inputBindings parameters
     let outputs ← match outputs with | none => pure [] | some outputs => outputBindings outputs
-    let contract ← interpContract I specification
+    let contract ← interpContract equal specification
     modify fun scope => { scope with modifies := contract.modifies, labels := [name] }
     let some body := body | reject range "A procedure body is required"
-    return ⟨name, inputs, outputs, contract, I.block name (← interpBlock I body)⟩
+    return ⟨name, inputs, outputs, contract, I.block name (← interpBlock I equal body)⟩
 
 /-- Interpret Boole declarations without lowering to Core. Globals are retained
 whenever their source type has a meaning; Core rejection of unlowerable types
 is the lowering's responsibility. -/
-def interpProgram (I : Interpretation) (program : Boole.Program) (names : GlobalContext) :
-    Except InterpError (InterpProgram I.Expression I.Statement) :=
-  let action : InterpM (InterpProgram I.Expression I.Statement) := do
+def interpProgram (I : CommandAlgebra C) (equal : Equality)
+    (supportsType : ValueType → Bool) (program : Boole.Program) (names : GlobalContext) :
+    Except InterpError (Program C) :=
+  let action : InterpM (Program C) := do
     let .prog _ commands := program
-    let mut procedures : List (InterpProcedure I.Expression I.Statement) := []
+    let mut procedures : List (Procedure C) := []
     for command in commands.val do
       match command with
       | .command_typedecl .. => pure ()
@@ -448,51 +397,14 @@ def interpProgram (I : Interpretation) (program : Boole.Program) (names : Global
       | .boole_procedure range name types inputs outputs decreases spec body =>
           if decreases.val.isSome then reject range "Procedure decreases clauses are outside this fragment"
           if procedures.any (fun p => p.name == name.val) then reject range "Duplicate procedure name"
-          let procedure ← interpProc I range name.val types.val inputs outputs.val spec.val body.val
+          let procedure ← interpProc I equal range name.val types.val inputs outputs.val spec.val body.val
           procedures := procedures ++ [procedure]
       | .command_procedure range _ name types inputs spec body =>
           if procedures.any (fun p => p.name == name.val) then reject range "Duplicate procedure name"
-          let procedure ← interpProc I range name.val types.val inputs none spec.val body.val
+          let procedure ← interpProc I equal range name.val types.val inputs none spec.val body.val
           procedures := procedures ++ [procedure]
       | _ => reject default s!"Unsupported declaration: {repr command}"
     return ⟨(← get).globals, procedures⟩
-  action.run' { names := names, supportsType := I.supportsType }
+  action.run' { names := names, supportsType := supportsType }
 
-private def checkingInterpretation (supportsType : ValueType → Bool) : Interpretation where
-  supportsType := supportsType
-  Expression := Unit
-  Statement := Unit
-  literal := fun _ => ()
-  apply := fun _ _ => ()
-  mapGet := fun _ _ => ()
-  mapSet := fun _ _ _ => ()
-  mapConst := fun _ _ => ()
-  sequenceEmpty := fun _ => ()
-  sequenceLength := fun _ => ()
-  sequenceAppend := fun _ _ => ()
-  sequenceBuild := fun _ _ => ()
-  read := fun _ => ()
-  unary := fun _ _ => ()
-  binary := fun _ _ _ => ()
-  conditional := fun _ _ _ => ()
-  old := fun _ => ()
-  skip := ()
-  seq := fun _ _ => ()
-  declare := fun _ _ => ()
-  assign := fun _ _ => ()
-  havoc := fun _ _ => ()
-  assertion := fun _ _ => ()
-  assumption := fun _ => ()
-  branch := fun _ _ _ => ()
-  loop := fun _ _ => ()
-  scope := fun _ => ()
-  block := fun _ _ => ()
-  exit := fun _ => ()
-
-/-- Check syntax, binding and type support with the same traversal used to build
-meanings. This discards the meanings and does not run the program. -/
-def checkFragment (supportsType : ValueType → Bool) (source : Boole.Program)
-    (names : GlobalContext) : Bool :=
-  (interpProgram (checkingInterpretation supportsType) source names).isOk
-
-end Strata.Boole
+end Strata.Boole.Interpretation

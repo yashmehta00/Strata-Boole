@@ -1,7 +1,7 @@
 module
 
-public import StrataBoole.Boole.Semantics.Adequacy.Lowering
-import all StrataBoole.Boole.Semantics.Adequacy.Lowering
+public import StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
+import all StrataBoole.Boole.Interpretation.Denotational.Adequacy.Lowering
 import all StrataBoole.Verify
 
 public section

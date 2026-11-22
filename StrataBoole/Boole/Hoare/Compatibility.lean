@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 module
 
 public import StrataBoole.Boole.Hoare.Certificate
-public import StrataBoole.Boole.Semantics.CoreReference
+public import StrataBoole.Boole.Interpretation.Denotational.CoreReference
 public import Strata.Languages.Core.Logic.ContractToHoareTriple
 import all Strata.Languages.Core.CmdType
 import all Strata.DL.Imperative.Stmt
